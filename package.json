@@ -1,0 +1,9 @@
+{
+  "name": "reddit-signal-scanner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reddit mention velocity scanner with Claude AI regulatory analysis",
+  "engines": {
+    "node": ">=18"
+  }
+}
