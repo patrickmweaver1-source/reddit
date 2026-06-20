@@ -1,0 +1,24 @@
+# Reddit Signal Scanner — Netlify config
+#
+# Uses a server-side function (netlify/functions/proxy.js) to fetch ApeWisdom
+# and Reddit. This avoids all browser CORS problems and removes any dependency
+# on unreliable public CORS proxies.
+#
+# The scanner calls:  /.netlify/functions/proxy?source=apewisdom&filter=...&page=...
+#
+# To update the scanner UI: edit index.html.
+# To update the proxy logic: edit netlify/functions/proxy.js.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
