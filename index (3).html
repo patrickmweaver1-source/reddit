@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reddit Signal Scanner</title>
+<style>
+  /* ── Tokens ──────────────────────────────────────────────────────────────── */
+  :root {
+    --bg:        #080c10;
+    --surface:   #0d1318;
+    --border:    #1a2530;
+    --border2:   #243040;
+    --text:      #c8d8e8;
+    --muted:     #4a6070;
+    --accent:    #00c8ff;   /* terminal cyan — institutional data */
+    --reddit:    #ff6314;   /* Reddit orange — community signal */
+    --green:     #00e676;
+    --amber:     #ffb300;
+    --red:       #ff3d3d;
+    --purple:    #b388ff;
+    --mono:      'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    --sans:      'Inter', 'Segoe UI', system-ui, sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* scanline atmosphere */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,200,255,0.012) 2px,
+      rgba(0,200,255,0.012) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Layout ──────────────────────────────────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+  .logo span { color: var(--reddit); }
+
+  .header-sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-left: auto;
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+  .status-dot.loading { background: var(--amber); animation: pulse 0.6s infinite; }
+  .status-dot.error { background: var(--red); }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+
+  #last-refresh {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 49px);
+  }
+
+  /* ── Controls ────────────────────────────────────────────────────────────── */
+  .controls {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .ctrl-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .ctrl-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+
+  .pill-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+  .pill-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .pill-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0,200,255,0.08); }
+  .pill-btn.reddit-active { border-color: var(--reddit); color: var(--reddit); background: rgba(255,99,20,0.08); }
+
+  .divider { width: 1px; height: 20px; background: var(--border2); }
+
+  select, input[type=number] {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 4px 8px;
+    outline: none;
+    cursor: pointer;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+
+  .scan-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 5px 16px;
+    border-radius: 3px;
+    border: 1px solid var(--accent);
+    background: rgba(0,200,255,0.1);
+    color: var(--accent);
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+    margin-left: auto;
+  }
+  .scan-btn:hover { background: rgba(0,200,255,0.2); }
+  .scan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Signal Table ────────────────────────────────────────────────────────── */
+  .table-pane {
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  thead th:hover { color: var(--accent); }
+  thead th.sort-asc::after { content: ' ↑'; color: var(--accent); }
+  thead th.sort-desc::after { content: ' ↓'; color: var(--accent); }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  tbody tr:hover { background: rgba(0,200,255,0.04); }
+  tbody tr.selected { background: rgba(0,200,255,0.08); }
+  tbody tr.pinned { background: rgba(255,179,0,0.06); }
+
+  td {
+    padding: 8px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .td-ticker {
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--accent);
+    min-width: 70px;
+  }
+
+  .td-mentions { color: var(--text); min-width: 70px; }
+
+  .velocity-bar {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 24px;
+    min-width: 80px;
+  }
+  .velocity-bar .bar {
+    flex: 1;
+    border-radius: 1px;
+    min-height: 3px;
+    transition: height 0.4s ease;
+  }
+
+  .td-change { min-width: 70px; font-weight: 600; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .neu { color: var(--muted); }
+
+  .sub-pills {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+    max-width: 160px;
+  }
+  .sub-pill {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 2px;
+    background: rgba(255,99,20,0.15);
+    color: var(--reddit);
+    border: 1px solid rgba(255,99,20,0.3);
+    white-space: nowrap;
+  }
+
+  .signal-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 2px;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .sig-spike    { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .sig-rising   { background: rgba(255,179,0,0.12); color: var(--amber); border: 1px solid rgba(255,179,0,0.3); }
+  .sig-new      { background: rgba(179,136,255,0.15); color: var(--purple); border: 1px solid rgba(179,136,255,0.3); }
+  .sig-watch    { background: rgba(0,200,255,0.1); color: var(--accent); border: 1px solid rgba(0,200,255,0.3); }
+  .sig-fade     { background: rgba(255,61,61,0.1); color: var(--red); border: 1px solid rgba(255,61,61,0.2); }
+
+  .pin-star {
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--muted);
+    transition: color 0.15s;
+    padding: 0 4px;
+  }
+  .pin-star:hover, .pin-star.pinned { color: var(--amber); }
+
+  /* ── Detail Pane ─────────────────────────────────────────────────────────── */
+  .detail-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+    min-height: 0;
+  }
+
+  /* Detail content scrolls as a whole when it overflows the pane */
+  #detail-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .detail-header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .detail-ticker {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .detail-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 3px;
+    line-height: 1.6;
+  }
+
+  .detail-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .metric-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 10px;
+  }
+  .metric-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .metric-val {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    margin-top: 3px;
+  }
+  .metric-sub {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* Velocity pulse strip — the signature element */
+  .pulse-strip {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 48px;
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .pulse-strip .bar {
+    flex: 1;
+    border-radius: 1px;
+    min-height: 3px;
+    transition: height 0.4s ease;
+  }
+  .pulse-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    padding: 0 16px 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    flex-shrink: 0;
+  }
+
+  /* AI Analysis */
+  .ai-section {
+    flex: 1 0 auto;
+    padding: 12px 16px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .ai-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .ai-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .ai-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+  }
+  .ai-btn:hover { background: rgba(0,200,255,0.1); }
+  .ai-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .ai-output {
+    font-family: var(--sans);
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--text);
+    white-space: pre-wrap;
+    flex: 0 0 auto;
+    min-height: 80px;
+  }
+
+  .ai-output.placeholder {
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  /* API key input */
+  .apikey-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .apikey-input {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 5px 8px;
+    outline: none;
+  }
+  .apikey-input:focus { border-color: var(--accent); }
+
+  .apikey-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* Empty states */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-align: center;
+    padding: 20px;
+  }
+  .empty-icon { font-size: 28px; }
+
+  /* Watchlist */
+  .watchlist-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .watchlist-input {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 4px 8px;
+    outline: none;
+    text-transform: uppercase;
+  }
+  .watchlist-input::placeholder { color: var(--muted); text-transform: none; }
+  .watchlist-input:focus { border-color: var(--reddit); }
+  .add-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--reddit);
+    background: transparent;
+    color: var(--reddit);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .add-btn:hover { background: rgba(255,99,20,0.1); }
+
+  .watchlist-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 16px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .wl-chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    background: rgba(255,99,20,0.12);
+    color: var(--reddit);
+    border: 1px solid rgba(255,99,20,0.25);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .wl-chip .rm { color: var(--muted); font-size: 12px; line-height: 1; }
+  .wl-chip:hover .rm { color: var(--red); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  /* Highlight watchlist rows */
+  tr.watchlisted td.td-ticker::after {
+    content: ' ★';
+    color: var(--reddit);
+    font-size: 10px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-left: 3px solid var(--accent);
+    padding: 10px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    border-radius: 3px;
+    z-index: 10000;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.25s;
+    max-width: 280px;
+  }
+  .toast.show { opacity: 1; transform: none; }
+
+  @media (max-width: 900px) {
+    .main { grid-template-columns: 1fr; grid-template-rows: auto; }
+    .detail-pane { border-top: 1px solid var(--border); min-height: 400px; }
+    .table-pane { min-height: 300px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div>
+    <div class="logo">REDDIT<span>SIGNAL</span> SCANNER</div>
+    <div class="header-sub">Community Velocity · AI Analysis · Reg Intelligence</div>
+  </div>
+  <span id="last-refresh">—</span>
+  <div class="status-dot" id="status-dot"></div>
+</header>
+
+<!-- ── Controls ────────────────────────────────────────────────────────────── -->
+<div class="controls">
+  <div class="ctrl-group">
+    <span class="ctrl-label">Feed</span>
+    <button class="pill-btn active" data-filter="all-stocks" onclick="setFilter(this)">ALL STOCKS</button>
+    <button class="pill-btn" data-filter="wallstreetbets" onclick="setFilter(this)">WSB</button>
+    <button class="pill-btn" data-filter="stocks" onclick="setFilter(this)">r/stocks</button>
+    <button class="pill-btn" data-filter="investing" onclick="setFilter(this)">r/investing</button>
+    <button class="pill-btn" data-filter="options" onclick="setFilter(this)">r/options</button>
+    <button class="pill-btn" data-filter="SPACs" onclick="setFilter(this)">SPACs</button>
+  </div>
+  <div class="divider"></div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">Min Mentions</span>
+    <input type="number" id="min-mentions" value="3" min="1" max="999" style="width:60px">
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">Signal</span>
+    <button class="pill-btn active" data-sig="all" onclick="setSigFilter(this)">All</button>
+    <button class="pill-btn" data-sig="spike" onclick="setSigFilter(this)">Spike</button>
+    <button class="pill-btn" data-sig="rising" onclick="setSigFilter(this)">Rising</button>
+    <button class="pill-btn" data-sig="new" onclick="setSigFilter(this)">New</button>
+  </div>
+  <div class="divider"></div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">Auto-refresh</span>
+    <select id="refresh-select">
+      <option value="0">Off</option>
+      <option value="300">5 min</option>
+      <option value="600" selected>10 min</option>
+      <option value="1800">30 min</option>
+    </select>
+  </div>
+  <button class="pill-btn" onclick="runDiagnostics()" title="Test which data path works">⚡ TEST</button>
+  <button class="scan-btn" id="scan-btn" onclick="runScan()">▶ SCAN</button>
+</div>
+
+<!-- ── Main ────────────────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Table -->
+  <div class="table-pane" id="table-pane">
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">📡</div>
+      <div>Hit SCAN to pull live Reddit signal data</div>
+      <div style="font-size:10px;color:var(--muted)">ApeWisdom API · No key required</div>
+    </div>
+    <table id="signal-table" style="display:none">
+      <thead>
+        <tr>
+          <th></th>
+          <th onclick="sortBy('ticker')">TICKER</th>
+          <th onclick="sortBy('mentions')">MENTIONS</th>
+          <th onclick="sortBy('change')">24H CHNG</th>
+          <th>VELOCITY</th>
+          <th onclick="sortBy('upvotes')">UPVOTES</th>
+          <th>SIGNAL</th>
+          <th>SUBS</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Detail pane -->
+  <div class="detail-pane">
+    <!-- Watchlist -->
+    <div class="watchlist-row">
+      <span class="apikey-label">WATCH</span>
+      <input class="watchlist-input" id="wl-input" placeholder="Add ticker e.g. NVDA" maxlength="8"
+             onkeydown="if(event.key==='Enter') addToWatchlist()">
+      <button class="add-btn" onclick="addToWatchlist()">+</button>
+    </div>
+    <div class="watchlist-chips" id="wl-chips"></div>
+
+    <!-- Detail content -->
+    <div id="detail-content">
+      <div class="empty-state" style="height:auto;padding:40px 20px">
+        <div class="empty-icon">←</div>
+        <div>Select a ticker to see detail</div>
+        <div style="font-size:10px;color:var(--muted)">AI analysis · Velocity pulse · Metrics</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════════════════════════════
+let state = {
+  data: [],
+  selected: null,
+  filter: 'all-stocks',
+  sigFilter: 'all',
+  sortKey: 'change',
+  sortDir: 'desc',
+  pinned: new Set(JSON.parse(localStorage.getItem('rss_pinned') || '[]')),
+  watchlist: new Set(JSON.parse(localStorage.getItem('rss_watchlist') || '[]')),
+  history: JSON.parse(localStorage.getItem('rss_history') || '{}'),
+  apiKey: localStorage.getItem('rss_apikey') || '',
+  refreshTimer: null,
+  scanning: false,
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// API
+// ══════════════════════════════════════════════════════════════════════════════
+// Data now flows through our own Netlify serverless function (server-side),
+// so there is no browser CORS problem and no dependency on public proxies.
+// Function endpoint: /.netlify/functions/proxy
+const PROXY_BASE = '/.netlify/functions/proxy';
+
+// For local testing without Netlify, you can point this at a public proxy,
+// but on the deployed site PROXY_BASE above is what runs.
+async function fetchJSONViaFunction(params, label) {
+  const qs = new URLSearchParams(params).toString();
+  const url = `${PROXY_BASE}?${qs}`;
+  let r;
+  try {
+    r = await fetch(url, { method: 'GET' });
+  } catch (e) {
+    throw new Error(`${label}: cannot reach proxy function (${e.message})`);
+  }
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch { throw new Error(`${label}: proxy returned non-JSON (HTTP ${r.status})`); }
+  if (data && data.error) throw new Error(`${label}: ${data.error}`);
+  if (!r.ok) throw new Error(`${label}: HTTP ${r.status}`);
+  return data;
+}
+
+async function fetchApeWisdom(filter, page = 1) {
+  const data = await fetchJSONViaFunction(
+    { source: 'apewisdom', filter, page: String(page) }, 'ApeWisdom');
+  if (!data || !Array.isArray(data.results)) {
+    throw new Error('ApeWisdom: unexpected response shape');
+  }
+  return data;
+}
+
+async function fetchRedditPosts(ticker, subreddit = 'all') {
+  try {
+    const j = await fetchJSONViaFunction(
+      { source: 'reddit', ticker, sub: subreddit }, 'Reddit');
+    return j.data?.children?.map(c => c.data) || [];
+  } catch (e) {
+    console.warn('Reddit context unavailable:', e.message);
+    return [];
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Signal Classification
+// ══════════════════════════════════════════════════════════════════════════════
+function classifySignal(item) {
+  const change = item.mentions_24h_ago > 0
+    ? ((item.mentions - item.mentions_24h_ago) / item.mentions_24h_ago) * 100
+    : item.mentions > 0 ? 999 : 0;
+
+  if (change >= 200 && item.mentions >= 10) return 'spike';
+  if (change >= 50 && item.mentions >= 5)  return 'rising';
+  if (item.mentions_24h_ago === 0 && item.mentions >= 3) return 'new';
+  if (change <= -30) return 'fade';
+  return 'watch';
+}
+
+function sigLabel(sig) {
+  const map = { spike: '⚡ SPIKE', rising: '↗ RISING', new: '★ NEW', fade: '↘ FADE', watch: '◉ WATCH' };
+  return map[sig] || sig;
+}
+function sigClass(sig) {
+  return 'sig-' + sig;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Velocity bars (signature element)
+// ══════════════════════════════════════════════════════════════════════════════
+function makeVelocityBars(ticker, count, maxCount, size = 8) {
+  const hist = state.history[ticker] || [];
+  // Simulate intra-period velocity using history + current value
+  const points = hist.slice(-size);
+  while (points.length < size) points.unshift(0);
+  points.push(count);
+
+  const max = Math.max(...points, 1);
+  const bars = points.map((v, i) => {
+    const pct = (v / max) * 100;
+    const isLast = i === points.length - 1;
+    const color = isLast
+      ? (v > (points[i-1]||0) ? 'var(--green)' : 'var(--reddit)')
+      : `rgba(255,99,20,${0.2 + (i / points.length) * 0.5})`;
+    return `<div class="bar" style="height:${Math.max(3, pct)}%;background:${color}"></div>`;
+  });
+  return `<div class="velocity-bar">${bars.join('')}</div>`;
+}
+
+function makePulseStrip(ticker, count) {
+  const hist = state.history[ticker] || [];
+  const points = [...hist.slice(-23), count];
+  while (points.length < 24) points.unshift(0);
+  const max = Math.max(...points, 1);
+
+  const bars = points.map((v, i) => {
+    const pct = (v / max) * 100;
+    const isLast = i === points.length - 1;
+    const isHigh = v >= max * 0.8;
+    const color = isLast ? 'var(--accent)'
+      : isHigh ? 'var(--green)'
+      : `rgba(0,200,255,${0.15 + (i / points.length) * 0.6})`;
+    return `<div class="bar" style="height:${Math.max(3, pct)}%;background:${color};flex:1"></div>`;
+  });
+  return bars.join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Diagnostics — tells the user exactly which data path works
+// ══════════════════════════════════════════════════════════════════════════════
+async function runDiagnostics() {
+  const results = [];
+  const t0 = performance.now();
+  let working = false;
+  try {
+    const url = `${PROXY_BASE}?source=apewisdom&filter=all-stocks&page=1`;
+    const r = await fetch(url, { method: 'GET' });
+    const text = await r.text();
+    const ms = Math.round(performance.now() - t0);
+    let data = null, ok = false;
+    try { data = JSON.parse(text); ok = Array.isArray(data.results); } catch {}
+    if (ok) {
+      results.push(`✓ Netlify function: ${r.status} (${ms}ms, ${data.results.length} tickers)`);
+      working = true;
+    } else if (data && data.error) {
+      results.push(`✗ Netlify function: ${data.error}`);
+    } else {
+      results.push(`✗ Netlify function: HTTP ${r.status}, unexpected response`);
+    }
+  } catch (e) {
+    results.push(`✗ Netlify function unreachable: ${e.message}`);
+    results.push(`   → Is the function deployed? Check netlify/functions/proxy.js exists`);
+  }
+  const empty = document.getElementById('empty-state');
+  if (empty) {
+    empty.style.display = 'flex';
+    empty.innerHTML =
+      `<div class="empty-icon">${working ? '✅' : '🔌'}</div>` +
+      `<div style="color:${working ? 'var(--green)' : 'var(--red)'}">` +
+      `${working ? 'Connection OK — hit SCAN' : 'All data paths blocked'}</div>` +
+      `<div style="font-size:10px;color:var(--muted);text-align:left;line-height:1.7;` +
+      `font-family:var(--mono);margin-top:6px">` +
+      results.join('<br>') + '</div>';
+  }
+  return working;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Scan
+// ══════════════════════════════════════════════════════════════════════════════
+async function runScan() {
+  if (state.scanning) return;
+  state.scanning = true;
+  setStatus('loading');
+  document.getElementById('scan-btn').disabled = true;
+  document.getElementById('scan-btn').textContent = '⟳ SCANNING...';
+
+  try {
+    // Fetch pages 1-2 for more coverage
+    // Page 1 is required; page 2 is best-effort (more coverage if it works)
+    const p1 = await fetchApeWisdom(state.filter, 1);
+    let p2results = [];
+    try {
+      const p2 = await fetchApeWisdom(state.filter, 2);
+      p2results = p2.results || [];
+    } catch (e) {
+      console.warn('Page 2 unavailable, continuing with page 1:', e.message);
+    }
+
+    const raw = [...(p1.results || []), ...p2results];
+
+    if (raw.length === 0) {
+      throw new Error('No ticker data returned (API reachable but empty)');
+    }
+
+    // Deduplicate
+    const seen = new Set();
+    const items = raw.filter(r => {
+      if (seen.has(r.ticker)) return false;
+      seen.add(r.ticker); return true;
+    });
+
+    // Record history
+    const now = Date.now();
+    items.forEach(item => {
+      if (!state.history[item.ticker]) state.history[item.ticker] = [];
+      state.history[item.ticker].push(item.mentions);
+      if (state.history[item.ticker].length > 24) {
+        state.history[item.ticker].shift();
+      }
+    });
+    localStorage.setItem('rss_history', JSON.stringify(state.history));
+
+    // Enrich with signal
+    state.data = items.map(item => ({
+      ...item,
+      signal: classifySignal(item),
+      change: item.mentions_24h_ago > 0
+        ? ((item.mentions - item.mentions_24h_ago) / item.mentions_24h_ago) * 100
+        : item.mentions > 0 ? 999 : 0,
+    }));
+
+    renderTable();
+    document.getElementById('last-refresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    setStatus('live');
+    toast('Scan complete — ' + state.data.length + ' tickers loaded');
+
+  } catch (e) {
+    setStatus('error');
+    toast('Scan failed: ' + e.message, true);
+    console.error(e);
+    // Surface the error persistently in the table area so it's not missed
+    const empty = document.getElementById('empty-state');
+    const table = document.getElementById('signal-table');
+    if (table) table.style.display = 'none';
+    if (empty) {
+      empty.style.display = 'flex';
+      empty.innerHTML =
+        '<div class="empty-icon">⚠️</div>' +
+        '<div style="color:var(--red)">Scan failed</div>' +
+        '<div style="font-size:11px;color:var(--muted);max-width:340px;line-height:1.5">' +
+        e.message + '</div>' +
+        '<div style="font-size:10px;color:var(--muted);margin-top:8px">' +
+        'If this persists, the data source or all CORS proxies may be down. ' +
+        'Try again in a moment, or switch feeds.</div>';
+    }
+  }
+
+  state.scanning = false;
+  document.getElementById('scan-btn').disabled = false;
+  document.getElementById('scan-btn').textContent = '▶ SCAN';
+
+  // Schedule next refresh
+  scheduleRefresh();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Render Table
+// ══════════════════════════════════════════════════════════════════════════════
+function renderTable() {
+  const minM = parseInt(document.getElementById('min-mentions').value) || 1;
+
+  let rows = state.data.filter(d => {
+    if (d.mentions < minM) return false;
+    if (state.sigFilter !== 'all' && d.signal !== state.sigFilter) return false;
+    return true;
+  });
+
+  // Sort
+  rows.sort((a, b) => {
+    let va = a[state.sortKey], vb = b[state.sortKey];
+    if (state.sortKey === 'ticker') { va = va||''; vb = vb||''; return state.sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
+    return state.sortDir === 'asc' ? va - vb : vb - va;
+  });
+
+  // Pinned first
+  const pinned = rows.filter(r => state.pinned.has(r.ticker));
+  const rest   = rows.filter(r => !state.pinned.has(r.ticker));
+  rows = [...pinned, ...rest];
+
+  const maxMentions = Math.max(...rows.map(r => r.mentions), 1);
+
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = rows.map(row => {
+    const changeStr = row.mentions_24h_ago === 0 && row.mentions > 0 ? 'NEW'
+      : row.change >= 0 ? `+${Math.round(row.change)}%`
+      : `${Math.round(row.change)}%`;
+    const changeClass = row.mentions_24h_ago === 0 ? 'neu'
+      : row.change >= 0 ? 'pos' : 'neg';
+    const isPinned = state.pinned.has(row.ticker);
+    const isWL = state.watchlist.has(row.ticker);
+
+    // Subreddit pills — parse from name if available
+    const subPills = row.name
+      ? `<div class="sub-pills"><span class="sub-pill">${state.filter === 'all-stocks' ? 'multi' : state.filter}</span></div>`
+      : '';
+
+    return `<tr data-ticker="${row.ticker}"
+               class="${isPinned ? 'pinned' : ''} ${isWL ? 'watchlisted' : ''} ${state.selected === row.ticker ? 'selected' : ''}"
+               onclick="selectTicker('${row.ticker}')">
+      <td><span class="pin-star ${isPinned ? 'pinned' : ''}" onclick="event.stopPropagation();togglePin('${row.ticker}')" title="Pin">★</span></td>
+      <td class="td-ticker">${row.ticker}</td>
+      <td class="td-mentions">${row.mentions}</td>
+      <td class="td-change ${changeClass}">${changeStr}</td>
+      <td>${makeVelocityBars(row.ticker, row.mentions, maxMentions)}</td>
+      <td class="td-mentions">${row.upvotes || '—'}</td>
+      <td><span class="signal-badge ${sigClass(row.signal)}">${sigLabel(row.signal)}</span></td>
+      <td>${subPills}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('signal-table').style.display = rows.length ? 'table' : 'none';
+  if (!rows.length) {
+    document.getElementById('empty-state').style.display = 'flex';
+    document.getElementById('empty-state').innerHTML =
+      '<div class="empty-icon">🔍</div><div>No tickers match current filters</div>';
+  }
+
+  updateSortHeaders();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Detail Pane
+// ══════════════════════════════════════════════════════════════════════════════
+async function selectTicker(ticker) {
+  state.selected = ticker;
+  const item = state.data.find(d => d.ticker === ticker);
+  if (!item) return;
+
+  // Update table selection highlight
+  document.querySelectorAll('tbody tr').forEach(r => {
+    r.classList.toggle('selected', r.dataset.ticker === ticker);
+  });
+
+  const changeStr = item.mentions_24h_ago === 0 && item.mentions > 0 ? 'NEW'
+    : item.change >= 0 ? `+${Math.round(item.change)}%`
+    : `${Math.round(item.change)}%`;
+  const changeColor = item.change >= 0 ? 'var(--green)' : 'var(--red)';
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-header">
+      <div class="detail-ticker">$${ticker}</div>
+      <div class="detail-meta">
+        Signal: <span class="signal-badge ${sigClass(item.signal)}" style="font-size:10px">${sigLabel(item.signal)}</span>
+        &nbsp;·&nbsp; Last scanned: ${new Date().toLocaleTimeString()}
+      </div>
+    </div>
+
+    <div class="detail-metrics">
+      <div class="metric-box">
+        <div class="metric-label">Mentions (24h)</div>
+        <div class="metric-val" style="color:var(--accent)">${item.mentions}</div>
+        <div class="metric-sub">${item.mentions_24h_ago || 0} yesterday</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">24h Change</div>
+        <div class="metric-val" style="color:${changeColor}">${changeStr}</div>
+        <div class="metric-sub">mention velocity</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Upvotes</div>
+        <div class="metric-val" style="color:var(--reddit)">${item.upvotes || '—'}</div>
+        <div class="metric-sub">community weight</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Rank</div>
+        <div class="metric-val" style="color:var(--purple)">#${state.data.indexOf(item)+1}</div>
+        <div class="metric-sub">of ${state.data.length} tickers</div>
+      </div>
+    </div>
+
+    <div class="pulse-label">Mention Velocity — Historical Pulse</div>
+    <div class="pulse-strip" id="pulse-strip">
+      ${makePulseStrip(ticker, item.mentions)}
+    </div>
+
+    <div class="apikey-row">
+      <span class="apikey-label">CLAUDE API KEY</span>
+      <input class="apikey-input" id="apikey-input" type="password"
+             placeholder="sk-ant-... (stored locally, never sent to any server except Anthropic)"
+             value="${state.apiKey}"
+             oninput="state.apiKey=this.value;localStorage.setItem('rss_apikey',this.value)">
+    </div>
+
+    <div class="ai-section">
+      <div class="ai-header">
+        <span class="ai-label">AI Analysis · Regulatory Intel</span>
+        <button class="ai-btn" id="ai-btn" onclick="runAnalysis('${ticker}')">▶ Analyse</button>
+      </div>
+      <div class="ai-output placeholder" id="ai-output">
+Click Analyse to run a Claude-powered analysis of $${ticker} combining Reddit signal context with regulatory risk framing. Requires Anthropic API key.
+      </div>
+    </div>
+  `;
+
+  // Trigger background Reddit post fetch for context
+  fetchRedditContext(ticker, item);
+}
+
+let redditContext = {};
+async function fetchRedditContext(ticker, item) {
+  try {
+    const posts = await fetchRedditPosts(ticker);
+    redditContext[ticker] = posts;
+  } catch(e) {
+    redditContext[ticker] = [];
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI Analysis via Anthropic API
+// ══════════════════════════════════════════════════════════════════════════════
+async function runAnalysis(ticker) {
+  const key = state.apiKey.trim();
+  if (!key || !key.startsWith('sk-')) {
+    toast('Enter your Anthropic API key in the field above', true);
+    return;
+  }
+
+  const item = state.data.find(d => d.ticker === ticker);
+  if (!item) return;
+
+  const btn = document.getElementById('ai-btn');
+  const out = document.getElementById('ai-output');
+  if (!btn || !out) return;
+
+  btn.disabled = true;
+  btn.textContent = '⟳ Researching...';
+  out.className = 'ai-output';
+
+  // Build context from Reddit posts
+  const posts = redditContext[ticker] || [];
+  const postSummary = posts.slice(0, 5).map(p =>
+    `• "${p.title}" (score: ${p.score}, sub: r/${p.subreddit}, comments: ${p.num_comments})`
+  ).join('\n') || 'No recent posts retrieved.';
+
+  const changeStr = item.mentions_24h_ago === 0 ? 'NEW (no prior data)'
+    : `${item.change >= 0 ? '+' : ''}${Math.round(item.change)}%`;
+
+  const prompt = `You are a financial analyst with deep expertise in U.S. securities law, fund regulation, options trading, and retail market microstructure. You are reviewing a Reddit signal for a retail trading scanner, and you have web search available — USE IT to research before answering.
+
+TICKER: $${ticker}
+SIGNAL TYPE: ${item.signal.toUpperCase()}
+REDDIT MENTIONS (24h): ${item.mentions}
+24h MENTION CHANGE: ${changeStr}
+UPVOTES: ${item.upvotes || 'unknown'}
+DATA SOURCE: ${state.filter} feed (ApeWisdom)
+
+RECENT REDDIT POSTS ABOUT THIS TICKER:
+${postSummary}
+
+RESEARCH STEPS — search the web for each of these before writing your analysis:
+1. Current stock price, recent price action, and what's driving it (news, catalyst, earnings) for $${ticker}
+2. Cross-platform sentiment — search StockTwits and X/Twitter for $${ticker} to see if the Reddit buzz is confirmed elsewhere or isolated to Reddit
+3. Company financials — latest revenue, profitability, cash position, and any red flags
+4. Analyst ratings and price targets — what do Wall Street analysts currently say
+5. Any SEC enforcement, litigation, short-seller reports, or regulatory exposure
+
+Then provide a structured analysis. Use plain section headers (no markdown bold/asterisks). Be direct, no hedging, no filler:
+
+SIGNAL READ — Is this organic DD, momentum pile-on, short squeeze setup, or noise? Is the Reddit velocity confirmed on StockTwits/Twitter or isolated? (3-4 sentences)
+
+FINANCIALS & VALUATION — Key fundamentals you found. Revenue trend, profitability, balance sheet health, valuation. Flag anything concerning. (3-4 sentences)
+
+ANALYST VIEW — Current consensus rating, price targets vs current price, any recent upgrades/downgrades. (2-3 sentences)
+
+REGULATORY / LEGAL FLAGS — SEC actions, investigations, litigation, short-seller reports, or sector-specific regulatory risk (banking, crypto, biotech, financial services). Apply your securities-law expertise. (2-3 sentences)
+
+STRUCTURAL RISKS — Options IV, float, short interest, dilution risk, any fundamental red flags. (2-3 sentences)
+
+VERDICT — One of: INVESTIGATE FURTHER / WATCH / PASS — and two sentences on why, weighing the cross-source picture.
+
+Cite specific numbers and sources you found. If a search came up empty, say so briefly. Do not add a 'not financial advice' disclaimer — the user knows.`;
+
+  out.textContent = 'Researching across sources (price, StockTwits, Twitter, financials, analysts, regulatory)… this takes 20–40 seconds.';
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
+      }),
+    });
+
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error.message);
+
+    // With web_search, the response has multiple content blocks.
+    // Concatenate all text blocks (skip tool_use / tool_result blocks).
+    const text = (data.content || [])
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n')
+      .trim() || 'No analysis returned.';
+    out.textContent = text;
+
+  } catch(e) {
+    out.textContent = 'Analysis failed: ' + e.message;
+    toast('Analysis error: ' + e.message, true);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↻ Refresh';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Watchlist
+// ══════════════════════════════════════════════════════════════════════════════
+function renderWatchlist() {
+  const container = document.getElementById('wl-chips');
+  if (!container) return;
+  container.innerHTML = [...state.watchlist].map(t =>
+    `<div class="wl-chip" onclick="selectTickerFromWatchlist('${t}')">
+      ${t} <span class="rm" onclick="event.stopPropagation();removeFromWatchlist('${t}')">×</span>
+    </div>`
+  ).join('');
+}
+
+function addToWatchlist() {
+  const inp = document.getElementById('wl-input');
+  const t = inp.value.trim().toUpperCase().replace(/[^A-Z0-9.]/g, '');
+  if (!t) return;
+  state.watchlist.add(t);
+  localStorage.setItem('rss_watchlist', JSON.stringify([...state.watchlist]));
+  inp.value = '';
+  renderWatchlist();
+  renderTable();
+  toast(`${t} added to watchlist`);
+}
+
+function removeFromWatchlist(t) {
+  state.watchlist.delete(t);
+  localStorage.setItem('rss_watchlist', JSON.stringify([...state.watchlist]));
+  renderWatchlist();
+  renderTable();
+}
+
+function selectTickerFromWatchlist(t) {
+  // Find in data or select anyway
+  const item = state.data.find(d => d.ticker === t);
+  if (item) selectTicker(t);
+  else toast(`${t} not in current scan data — run a scan first`);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Controls
+// ══════════════════════════════════════════════════════════════════════════════
+function setFilter(btn) {
+  document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active', 'reddit-active'));
+  btn.classList.add(btn.dataset.filter === 'wallstreetbets' ? 'reddit-active' : 'active');
+  state.filter = btn.dataset.filter;
+}
+
+function setSigFilter(btn) {
+  document.querySelectorAll('[data-sig]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  state.sigFilter = btn.dataset.sig;
+  if (state.data.length) renderTable();
+}
+
+function sortBy(key) {
+  if (state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+  else { state.sortKey = key; state.sortDir = 'desc'; }
+  if (state.data.length) renderTable();
+}
+
+function updateSortHeaders() {
+  document.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    const keyMap = { 'TICKER': 'ticker', 'MENTIONS': 'mentions', '24H CHNG': 'change', 'UPVOTES': 'upvotes' };
+    const label = th.textContent.replace(/[↑↓]/g,'').trim();
+    if (keyMap[label] === state.sortKey) {
+      th.classList.add(state.sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
+function togglePin(ticker) {
+  if (state.pinned.has(ticker)) state.pinned.delete(ticker);
+  else state.pinned.add(ticker);
+  localStorage.setItem('rss_pinned', JSON.stringify([...state.pinned]));
+  renderTable();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Auto-refresh
+// ══════════════════════════════════════════════════════════════════════════════
+function scheduleRefresh() {
+  clearTimeout(state.refreshTimer);
+  const secs = parseInt(document.getElementById('refresh-select').value);
+  if (secs > 0) {
+    state.refreshTimer = setTimeout(() => runScan(), secs * 1000);
+  }
+}
+
+document.getElementById('refresh-select').addEventListener('change', () => {
+  clearTimeout(state.refreshTimer);
+  if (state.data.length) scheduleRefresh();
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Status / Toast
+// ══════════════════════════════════════════════════════════════════════════════
+function setStatus(s) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot ' + s;
+}
+
+let toastTimer;
+function toast(msg, isError = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.borderLeftColor = isError ? 'var(--red)' : 'var(--accent)';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Keyboard shortcuts
+// ══════════════════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'r' || e.key === 'R') runScan();
+  if (e.key === 'Escape') state.selected = null;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const rows = [...document.querySelectorAll('tbody tr')];
+    const idx = rows.findIndex(r => r.dataset.ticker === state.selected);
+    const next = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+    if (rows[next]) selectTicker(rows[next].dataset.ticker);
+    e.preventDefault();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Init
+// ══════════════════════════════════════════════════════════════════════════════
+renderWatchlist();
+
+// Watchlist input enter key
+document.getElementById('wl-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addToWatchlist();
+});
+
+// Restore API key display
+if (state.apiKey) {
+  // Key is stored, will be pre-filled when detail pane opens
+}
+</script>
+</body>
+</html>
