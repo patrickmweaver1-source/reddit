@@ -9,6 +9,7 @@ import re
 import logging
 import os
 import secrets
+import time
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -24,6 +25,7 @@ from . import game as G
 from . import rules as R
 from . import sizing as S
 from . import stats as ST
+from . import bybit as BY
 from .bybit import BybitError
 from .db import now_ms
 from .trades import utc_parts
@@ -70,7 +72,11 @@ async def security(request: web.Request, handler):
         tok = request.headers.get("X-Trap-Token") or request.query.get("token")
         if not tok or not secrets.compare_digest(tok, TOKEN):
             return fail("Missing or bad session token. Reload the page.", 401)
+    t0 = time.monotonic()
     resp = await handler(request)
+    took = time.monotonic() - t0
+    if took > 3 and request.path != "/api/events":
+        log.warning("slow request: %s %s took %.1fs", request.method, request.path, took)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     resp.headers.setdefault("X-Frame-Options", "DENY")
@@ -170,13 +176,30 @@ async def overview(request):
     return ok(a.market.overview())
 
 
+_BG_REFRESH: dict[str, asyncio.Task] = {}
+
+
+async def _quiet_refresh(a, sym: str) -> None:
+    try:
+        await a.market.refresh(sym)
+    except Exception as exc:  # noqa: BLE001  (the market loop retries; the page already has data)
+        log.info("background refresh %s: %s", sym, exc)
+
+
 async def market_symbol(request):
     a = app_of(request)
     sym = request.match_info["symbol"].upper()
     sd = a.market.sd(sym)
-    if not sd.snapshot or request.query.get("refresh"):
+    if sd.snapshot and request.query.get("refresh"):
+        # Answer at once with what the market loop already has (at most ~20s old) and top it
+        # up in the background. Waiting for Bybit here held the chart page for seconds.
+        t = _BG_REFRESH.get(sym)
+        if t is None or t.done():
+            _BG_REFRESH[sym] = asyncio.create_task(_quiet_refresh(a, sym))
+    BY.INTERACTIVE.set(True)
+    if not sd.snapshot:
         try:
-            await a.market.refresh(sym, force=not sd.snapshot)
+            await a.market.refresh(sym, force=True)
         except BybitError as exc:
             return fail(str(exc), 502)
     return ok(sd.snapshot)
@@ -184,6 +207,7 @@ async def market_symbol(request):
 
 async def chart_data(request):
     """Candles + OI + CVD + funding for the Market Monitor at any timeframe."""
+    BY.INTERACTIVE.set(True)      # a person is waiting on this: go ahead of background downloads
     a = app_of(request)
     sym = request.match_info["symbol"].upper()
     tf = request.query.get("tf", "15")

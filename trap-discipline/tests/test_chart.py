@@ -54,10 +54,11 @@ class FakeSrc:
         rows = [r for r in self.rows if end is None or r["t"] <= end]
         return [dict(r) for r in rows[-limit:]]
 
-    async def open_interest(self, sym, interval="15min", limit=200, pages=1):
-        return [{"t": r["t"], "oi": 100.0} for r in self.rows[-limit * pages:]]
+    async def open_interest(self, sym, interval="15min", limit=200, pages=1, start=None, end=None):
+        rows = [r for r in self.rows if (start is None or r["t"] >= start) and (end is None or r["t"] <= end)]
+        return [{"t": r["t"], "oi": 100.0} for r in rows[-limit * pages:]]
 
-    async def funding_history(self, sym, pages=3):
+    async def funding_history(self, sym, pages=3, **_):
         return []
 
 
@@ -77,7 +78,8 @@ def test_pages_back_and_top_up(CH):
         assert len(d["candles"]) == 2500 and not d["complete"]
         ts = [k["t"] for k in d["candles"]]
         assert ts == sorted(ts) and len(set(ts)) == len(ts)
-        assert len(src.calls) == 3                        # 1000 + 1000 + 500, then stops
+        # the newest page first, then the older pages all at once (pages past the first bar come back empty)
+        assert src.calls[0] == (1000, None) and len(src.calls) == 1 + -(-(8736 - 1000) // 1000)
         assert len(d["oi"]) == len(d["cvd"]) == len(d["funding"]) == len(d["candles"])
         # a new bar prints; the refresh returns only bars at/after `since`
         src.rows.append({"t": 2500 * bar, "o": 1, "h": 3, "l": 1, "c": 2, "v": 1, "q": 1})

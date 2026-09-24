@@ -85,7 +85,14 @@ def _keyring():
         return None
 
 
+# The key is read from the OS vault once and kept in memory. The status check behind the
+# checklist's AI panel runs often, and on a Mac every vault read goes to the Keychain, which
+# is slow and can stall the whole app while it waits (or while a permission prompt is open).
+_KEY_CACHE: dict[str, str | None] = {}
+
+
 def key_save(key: str) -> str:
+    _KEY_CACHE.clear()
     kr = _keyring()
     if kr:
         kr.set_password(KEYRING_SERVICE, "api_key", key)
@@ -100,6 +107,13 @@ def key_save(key: str) -> str:
 
 
 def key_load() -> str | None:
+    ck = str(_FALLBACK)
+    if ck not in _KEY_CACHE:
+        _KEY_CACHE[ck] = _key_load_vault()
+    return _KEY_CACHE[ck]
+
+
+def _key_load_vault() -> str | None:
     kr = _keyring()
     if kr:
         try:
@@ -117,6 +131,7 @@ def key_load() -> str | None:
 
 
 def key_clear() -> None:
+    _KEY_CACHE.clear()
     kr = _keyring()
     if kr:
         try:

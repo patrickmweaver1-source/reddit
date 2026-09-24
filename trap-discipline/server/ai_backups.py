@@ -123,7 +123,11 @@ def _keyring():
     return k()
 
 
+_KEY_CACHE: dict[str, str | None] = {}     # read from the OS vault once (see ai._KEY_CACHE)
+
+
 def key_save(provider: str, key: str) -> str:
+    _KEY_CACHE.clear()
     kr = _keyring()
     if kr:
         kr.set_password(KEYRING_SERVICE, f"{provider}_key", key)
@@ -139,6 +143,13 @@ def key_save(provider: str, key: str) -> str:
 
 
 def key_load(provider: str) -> str | None:
+    ck = str(_file(provider))
+    if ck not in _KEY_CACHE:
+        _KEY_CACHE[ck] = _key_load_vault(provider)
+    return _KEY_CACHE[ck]
+
+
+def _key_load_vault(provider: str) -> str | None:
     kr = _keyring()
     if kr:
         try:
@@ -157,6 +168,7 @@ def key_load(provider: str) -> str | None:
 
 
 def key_clear(provider: str) -> None:
+    _KEY_CACHE.clear()
     kr = _keyring()
     if kr:
         try:

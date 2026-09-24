@@ -13,6 +13,7 @@ Safety design (the most important invariant of the whole app):
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import hmac
 import json
@@ -49,6 +50,13 @@ PRIVATE_GET = frozenset({
     "/v5/account/fee-rate",
 })
 WS_ALLOWED_OPS = frozenset({"auth", "subscribe", "ping"})
+
+# Set by request handlers a person is waiting on (a chart, the market panel). Background
+# work (auto-tune history, journal backfill, the market loop) steps aside while any such
+# request is waiting for its turn, so a page never queues behind a long download.
+INTERACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar("bybit_interactive", default=False)
+PACE_S = 0.05     # about 20 requests a second, a sixth of Bybit's 600 per 5 seconds per IP
+HEDGE_S = 2.5     # a public read slower than this for a waiting page gets one duplicate request
 PRIVATE_TOPICS = ("position", "execution", "order", "wallet")
 
 
@@ -102,8 +110,8 @@ class BybitREST:
         self.recv_window = 10000
         self.time_offset_ms = 0
         self._last_sync = 0.0
-        self._pace = asyncio.Lock()
         self._next_slot = 0.0
+        self._hi_waiting = 0
         self.last_error: str | None = None
 
     @property
@@ -135,13 +143,23 @@ class BybitREST:
         return int(time.time() * 1000) + self.time_offset_ms
 
     async def _wait_turn(self) -> None:
-        """Pace requests (about 8 a second) far below Bybit's 600 per 5 seconds per IP,
-        so a journal rebuild or a long chart lookback never trips a limit or a ban."""
-        async with self._pace:
+        """Pace requests far below Bybit's 600 per 5 seconds per IP, so a journal rebuild or a
+        long chart lookback never trips a limit or a ban. Requests a person is waiting on go first."""
+        hi = INTERACTIVE.get()
+        if hi:
+            self._hi_waiting += 1
+        else:
+            while self._hi_waiting:
+                await asyncio.sleep(0.05)
+        try:
             now = time.monotonic()
-            if self._next_slot > now:
-                await asyncio.sleep(self._next_slot - now)
-            self._next_slot = max(now, self._next_slot) + 0.12
+            slot = max(now, self._next_slot)       # reserve a slot (no await in between: single event loop)
+            self._next_slot = slot + PACE_S
+            if slot > now:
+                await asyncio.sleep(slot - now)
+        finally:
+            if hi:
+                self._hi_waiting -= 1
 
     async def get_public(self, path: str, params: dict | None = None) -> dict:
         return await self._get(path, params or {}, private=False)
@@ -178,15 +196,10 @@ class BybitREST:
             await self._wait_turn()
             reset_ms = None
             try:
-                async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 403:
-                        text = (await resp.text())[:200]
-                        self.last_error = "HTTP 403 from Bybit (access denied: IP/region block or rate-limit ban)."
-                        raise BybitError(403, self.last_error + " " + text, path)
-                    if resp.status >= 500:
-                        raise BybitError(resp.status, f"HTTP {resp.status}", path)
-                    body = await resp.json(content_type=None)
-                    reset_ms = resp.headers.get("X-Bapi-Limit-Reset-Timestamp")
+                if not private and INTERACTIVE.get():
+                    body, reset_ms = await self._hedged(url, headers, path)
+                else:
+                    body, reset_ms = await self._fetch(url, headers, path)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
                 self.last_error = f"Network error: {exc.__class__.__name__}"
                 if attempt >= 2:
@@ -219,6 +232,41 @@ class BybitREST:
             return body.get("result") or {}
         raise BybitError(-3, "exhausted retries", path)
 
+    async def _fetch(self, url: str, headers: dict, path: str) -> tuple[dict, str | None]:
+        async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status == 403:
+                text = (await resp.text())[:200]
+                self.last_error = "HTTP 403 from Bybit (access denied: IP/region block or rate-limit ban)."
+                raise BybitError(403, self.last_error + " " + text, path)
+            if resp.status >= 500:
+                raise BybitError(resp.status, f"HTTP {resp.status}", path)
+            return await resp.json(content_type=None), resp.headers.get("X-Bapi-Limit-Reset-Timestamp")
+
+    async def _hedged(self, url: str, headers: dict, path: str) -> tuple[dict, str | None]:
+        """Public data a person is waiting on: if Bybit has not answered in HEDGE_S (a stalled
+        connection over a VPN), send the same read once more and take whichever answers first.
+        A chart built from many pages otherwise waits on its single slowest page."""
+        tasks = [asyncio.ensure_future(self._fetch(url, headers, path))]
+        try:
+            done, _ = await asyncio.wait(tasks, timeout=HEDGE_S)
+            if done:
+                return tasks[0].result()
+            await self._wait_turn()
+            tasks.append(asyncio.ensure_future(self._fetch(url, headers, path)))
+            pending = set(tasks)
+            err: BaseException | None = None
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for t in done:
+                    if t.exception() is None:
+                        return t.result()
+                    err = t.exception()
+            raise err  # both failed: the caller's retry handling takes it from here
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
     async def paged(self, path: str, params: dict, private: bool, max_pages: int = 20) -> list[dict]:
         out: list[dict] = []
         cursor = None
@@ -245,17 +293,19 @@ class BybitREST:
         rows.sort(key=lambda x: x["t"])
         return rows
 
-    async def open_interest(self, symbol: str, interval: str = "15min", limit: int = 200, pages: int = 1) -> list[dict]:
-        rows = await self.paged("/v5/market/open-interest", {"category": "linear", "symbol": symbol, "intervalTime": interval, "limit": limit}, private=False, max_pages=pages)
+    async def open_interest(self, symbol: str, interval: str = "15min", limit: int = 200, pages: int = 1,
+                            start: int | None = None, end: int | None = None) -> list[dict]:
+        rows = await self.paged("/v5/market/open-interest", {"category": "linear", "symbol": symbol, "intervalTime": interval, "limit": limit,
+                                                             "startTime": start, "endTime": end}, private=False, max_pages=pages)
         out = [{"t": int(r["timestamp"]), "oi": float(r["openInterest"])} for r in rows]
         out.sort(key=lambda x: x["t"])
         return out
 
-    async def funding_history(self, symbol: str, pages: int = 3) -> list[dict]:
+    async def funding_history(self, symbol: str, pages: int = 3, start: int | None = None, end: int | None = None) -> list[dict]:
         out: list[dict] = []
-        end = None
         for _ in range(pages):
-            res = await self.get_public("/v5/market/funding/history", {"category": "linear", "symbol": symbol, "limit": 200, "endTime": end})
+            res = await self.get_public("/v5/market/funding/history", {"category": "linear", "symbol": symbol, "limit": 200,
+                                                                         "startTime": start if end is not None else None, "endTime": end})
             rows = res.get("list") or []
             if not rows:
                 break

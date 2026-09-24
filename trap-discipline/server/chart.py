@@ -108,39 +108,72 @@ class ChartData:
     def _src(self):
         return self.app.source
 
-    async def _klines_back(self, sym: str, tf: str, need: int) -> list[dict]:
-        """Page backwards from now until `need` bars (or no older data)."""
+    async def _klines_back(self, sym: str, tf: str, need: int, first: list[dict] | None = None) -> list[dict]:
+        """The newest `need` bars. After the newest page, the older pages are cut by time from
+        its oldest bar and fetched together instead of one after another (a 3 month 15m chart
+        is 9 pages: two round trips to Bybit now instead of nine)."""
         src = self._src()
-        rows: dict[int, dict] = {}
-        end = None
-        while len(rows) < need:
-            want = min(KLINE_PAGE, need - len(rows) + 1)
-            page = await src.klines(sym, tf, limit=want, end=end)
-            if not page:
-                break
-            oldest = page[0]["t"]
-            new = [k for k in page if k["t"] not in rows]
-            for k in page:
-                rows[k["t"]] = k
-            if not new or (end is not None and oldest >= end) or len(page) < want:
-                break   # a short page means there is no older history
-            end = oldest - 1
+        bar = TF_MS[tf]
+        want = min(KLINE_PAGE, need + 1)                  # +1: the forming bar
+        if first is None:
+            first = await src.klines(sym, tf, limit=want)
+        rows = {k["t"]: k for k in first}
+        if first and len(first) >= want and len(rows) < need:
+            spans = []
+            hi = first[0]["t"] - 1
+            left = need - len(rows)
+            while left > 0:
+                n = min(KLINE_PAGE, left)
+                spans.append((hi - n * bar + 1, hi, n))
+                hi -= n * bar
+                left -= n
+            pages = await asyncio.gather(*(src.klines(sym, tf, limit=n, start=a, end=b) for a, b, n in spans))
+            for page in pages:
+                for k in page:
+                    rows.setdefault(k["t"], k)
         out = [rows[t] for t in sorted(rows)]
         return out[-need:]
 
-    async def _oi(self, sym: str, tf_ms: int, span_ms: int) -> list[dict]:
+    async def _windows(self, fetch, newest: int, span_ms: int, step_ms: int, cap: int) -> list[dict]:
+        """Fetch [newest - span, newest] in windows of 190 readings (under the 200 page size), all at once."""
+        first = newest - span_ms - step_ms
+        spans = []
+        hi = newest
+        while hi > first and len(spans) < cap:
+            spans.append((max(first, hi - 189 * step_ms), hi))    # 190 readings: one page, no empty follow-up page
+            hi -= 190 * step_ms
+        parts = await asyncio.gather(*(fetch(a, b) for a, b in spans), return_exceptions=True)
+        byt = {p["t"]: p for part in parts if not isinstance(part, BaseException) for p in part}
+        if not byt:
+            errs = [p for p in parts if isinstance(p, BaseException)]
+            if errs:
+                raise errs[0]
+        return [byt[t] for t in sorted(byt)]
+
+    async def _oi(self, sym: str, tf_ms: int, span_ms: int, newest: int) -> list[dict]:
         name, ms = oi_interval_for(tf_ms, span_ms)
-        pages = max(1, min(15, -(-int(span_ms / ms) // 200)))
+        src = self._src()
         try:
-            return await self._src().open_interest(sym, interval=name, limit=200, pages=pages)
+            if getattr(self.app, "demo", False):
+                return await src.open_interest(sym, interval=name, limit=200, pages=max(1, min(15, -(-int(span_ms / ms) // 200))))
+            return await self._windows(lambda a, b: src.open_interest(sym, interval=name, limit=200, pages=2, start=a, end=b),
+                                       newest, span_ms, ms, 15)
         except Exception as exc:  # noqa: BLE001
             log.info("chart OI %s: %s", sym, exc)
             return []
 
-    async def _funding(self, sym: str, span_ms: int) -> list[dict]:
-        pages = max(1, min(10, -(-int(span_ms / (8 * 3_600_000)) // 200)))
+    async def _funding(self, sym: str, span_ms: int, newest: int) -> list[dict]:
+        src = self._src()
         try:
-            return await self._src().funding_history(sym, pages=pages)
+            if getattr(self.app, "demo", False):
+                return await src.funding_history(sym, pages=max(1, min(10, -(-int(span_ms / (8 * 3_600_000)) // 200))))
+            # windows sized from this coin's settlement interval (1h, 4h or 8h); each window still pages
+            # inside itself, so a guess that is too wide only costs an extra page, never a gap
+            m = self.app.market
+            sd = m.data.get(sym) if m is not None and isinstance(getattr(m, "data", None), dict) else None
+            ih = ((getattr(sd, "snapshot", None) or {}).get("funding") or {}).get("interval_h") if sd is not None else None
+            step = int(float(ih or 8) * 3_600_000)
+            return await self._windows(lambda a, b: src.funding_history(sym, pages=3, start=a, end=b), newest, span_ms, step, 12)
         except Exception as exc:  # noqa: BLE001
             log.info("chart funding %s: %s", sym, exc)
             return []
@@ -178,9 +211,13 @@ class ChartData:
 
     async def _full(self, sym: str, tf: str, need: int) -> dict:
         bar = TF_MS[tf]
-        candles = await self._klines_back(sym, tf, need)
-        span = (candles[-1]["t"] - candles[0]["t"] + bar) if candles else need * bar
-        oi, funding = await asyncio.gather(self._oi(sym, bar, span), self._funding(sym, span))
+        span = need * bar
+        # the newest page first (it fixes where "now" is), then the older candle pages, open
+        # interest and funding all at once
+        first = await self._src().klines(sym, tf, limit=min(KLINE_PAGE, need + 1))
+        newest = (first[-1]["t"] + bar) if first else now_ms()
+        candles, oi, funding = await asyncio.gather(self._klines_back(sym, tf, need, first), self._oi(sym, bar, span, newest),
+                                                    self._funding(sym, span, newest))
         now = time.monotonic()
         return {"candles": candles, "oi": oi, "funding": funding, "fetched": now, "funding_at": now,
                 "exhausted": len(candles) < need}
@@ -199,7 +236,12 @@ class ChartData:
                 c = self.cache[key] = await self._full(sym, tf, need)
             elif now - c["fetched"] > 10:
                 # top up: newest candles (the forming bar changes every tick) and the latest OI
-                tail = await self._src().klines(sym, tf, limit=min(200, max(3, need)))
+                name, _ = oi_interval_for(bar, len(c["candles"]) * bar)
+                tail, new_oi = await asyncio.gather(self._src().klines(sym, tf, limit=min(200, max(3, need))),
+                                                    self._src().open_interest(sym, interval=name, limit=200, pages=1),
+                                                    return_exceptions=True)
+                if isinstance(tail, BaseException):
+                    raise tail
                 last = c["candles"][-1]["t"] if c["candles"] else None
                 if tail and last is not None and tail[0]["t"] > last + bar:
                     # the cache fell further behind than one page (laptop slept, timeframe unused): reload
@@ -210,8 +252,8 @@ class ChartData:
                         byt[k["t"]] = k
                     c["candles"] = [byt[t] for t in sorted(byt)][-max(need, len(c["candles"])):]
                     try:
-                        name, _ = oi_interval_for(bar, len(c["candles"]) * bar)
-                        new_oi = await self._src().open_interest(sym, interval=name, limit=200, pages=1)
+                        if isinstance(new_oi, BaseException):
+                            raise new_oi
                         byo = {p["t"]: p for p in c["oi"]}
                         for p in new_oi:
                             byo[p["t"]] = p

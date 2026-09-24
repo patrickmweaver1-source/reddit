@@ -179,6 +179,17 @@ class TrapApp:
                 await self.connect_account(k, s, save=False)
         self._tasks.append(asyncio.create_task(self._periodic(), name="periodic"))
         self._tasks.append(asyncio.create_task(self.tuner.loop(), name="auto-tune"))
+        self._tasks.append(asyncio.create_task(self._stall_watch(), name="stall-watch"))
+
+    async def _stall_watch(self) -> None:
+        """Diagnostics only: write to trap.log whenever the app server stops responding
+        for more than a second, so a slow page can be traced to its cause."""
+        while True:
+            t0 = time.monotonic()
+            await asyncio.sleep(1.0)
+            late = time.monotonic() - t0 - 1.0
+            if late > 1.0:
+                log.warning("app server was busy for %.1fs (every page waited)", late)
 
     async def _repair_watchlist(self) -> None:
         """Older versions saved whatever was typed ("XRP"), which Bybit rejects.

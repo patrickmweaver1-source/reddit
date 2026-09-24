@@ -135,11 +135,11 @@ class DemoSource:
                             "v": k["v"] / 3, "q": k["q"] / 3})
         return out
 
-    async def open_interest(self, sym: str, interval: str = "15min", limit: int = 200, pages: int = 1) -> list[dict]:
+    async def open_interest(self, sym: str, interval: str = "15min", limit: int = 200, pages: int = 1, **_: Any) -> list[dict]:
         self._gen(sym)
         return [dict(r) for r in self._oi[sym][-limit * pages:]]
 
-    async def funding_history(self, sym: str, pages: int = 3) -> list[dict]:
+    async def funding_history(self, sym: str, pages: int = 3, **_: Any) -> list[dict]:
         rng = random.Random(hash((sym, "f")) & 0xFFFFFFFF)
         now = now_ms()
         t0 = now - now % (8 * 3_600_000)

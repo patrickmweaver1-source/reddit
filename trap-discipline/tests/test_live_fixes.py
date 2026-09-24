@@ -90,7 +90,8 @@ def test_bybit_retries_resign_and_back_off(tmp_path, monkeypatch):
             t0 = time.monotonic()
             for _ in range(5):
                 await r.get_public("/v5/market/time")
-            assert time.monotonic() - t0 >= 0.45                                      # paced, not a burst
+            from server import bybit as BYM
+            assert time.monotonic() - t0 >= 4 * BYM.PACE_S * 0.95                    # paced, not a burst
         await runner.cleanup()
     asyncio.run(go())
 
