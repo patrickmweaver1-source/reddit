@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="trap-token" content="__TRAP_TOKEN__">
+<title>TRAP Discipline</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2336d7c7'/%3E%3Cpath d='M6 22l6-8 5 5 4-7 5 10' fill='none' stroke='%23041012' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#06090f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TRAP">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/css/app.css?v=__TRAP_VERSION__">
+</head>
+<body>
+<div id="shell">
+  <aside id="side">
+    <div class="brand">
+      <div class="brand-mark"><svg viewBox="0 0 24 24"><path d="M3 17l5-7 4 4 3-6 6 10"/></svg></div>
+      <div><div class="brand-name">TRAP</div><div class="brand-sub">Discipline</div></div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot">
+      <div class="conn" id="conn-line"><span class="dotlive"></span><span class="lbl">Connecting…</span></div>
+      <div class="conn muted lbl" style="font-size:11px">Read-only. This app cannot trade.</div>
+    </div>
+  </aside>
+  <main id="main">
+    <header id="top"></header>
+    <section id="view" tabindex="-1"></section>
+  </main>
+</div>
+<aside id="drawer" aria-label="Coach"></aside>
+<div id="modal" role="dialog" aria-modal="true"></div>
+<div id="toasts" aria-live="polite"></div>
+<canvas id="confetti"></canvas>
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/vendor/confetti.browser.js"></script>
+<script type="module" src="/static/js/app.js?v=__TRAP_VERSION__"></script>
+</body>
+</html>
