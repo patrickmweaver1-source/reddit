@@ -41,7 +41,7 @@ function draw(G) {
     h('h2', { style: { margin: '26px 0 12px' } }, 'Rank ladder'),
     h('div.card', h('div', { style: { display: 'grid', gridTemplateColumns: `repeat(${G.ranks.length}, 1fr)`, gap: '6px' } }, G.ranks.map(r => {
       const reached = lv.level >= r.from_level;
-      return h('div', { style: { textAlign: 'center', padding: '10px 4px', borderRadius: '10px', background: reached ? 'rgba(139,123,255,.14)' : 'rgba(15,23,42,0.018)', border: `1px solid ${r.rank === lv.rank ? 'var(--xp)' : 'var(--line)'}` } },
+      return h('div', { style: { textAlign: 'center', padding: '10px 4px', borderRadius: '10px', background: reached ? 'rgba(139,123,255,.14)' : 'rgba(var(--ov),0.018)', border: `1px solid ${r.rank === lv.rank ? 'var(--xp)' : 'var(--line)'}` } },
         h('div', { style: { fontSize: '10.5px', color: 'var(--ink-3)', fontFamily: 'var(--mono)' } }, `L${r.from_level}`),
         h('div', { style: { fontSize: '11.5px', fontWeight: 600, color: reached ? 'var(--ink)' : 'var(--ink-3)', marginTop: '4px', lineHeight: 1.25 } }, r.rank));
     }))),
@@ -59,7 +59,7 @@ function draw(G) {
       G.recent_xp.length ? h('table.tbl', h('tbody', G.recent_xp.map(x => h('tr', h('td.mono', fmt.local(x.ts)), h('td', XP_LABELS[x.kind] || x.kind), h('td.muted', x.note || ''), h('td.num', { class: x.xp < 0 ? 'bad' : 'accent' }, x.xp > 0 ? `+${x.xp}` : x.xp))))) : h('div.muted', 'No XP yet. Start with the daily check-in.')));
 }
 function box(ic, label, val, foot) {
-  return h('div', { style: { padding: '12px', borderRadius: '12px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
+  return h('div', { style: { padding: '12px', borderRadius: '12px', background: 'rgba(var(--ov),0.027)', border: '1px solid var(--line)' } },
     h('div.eyebrow', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, icon(ic, 'sm'), label),
     h('div', { style: { fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 700, marginTop: '4px' } }, val), h('div.muted', { style: { fontSize: '11.5px' } }, foot));
 }

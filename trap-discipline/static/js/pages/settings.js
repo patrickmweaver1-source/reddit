@@ -18,7 +18,41 @@ function draw() {
       h('div.sub', 'The app runs only on this computer (127.0.0.1). Your API secret is stored in your operating system\'s credential vault and never reaches the browser.'))),
     h('div.grid.g2',
       h('div.col', { style: { gap: '16px' } }, modeCard(c), connectCard(c), aiCard(), backupCard()),
-      h('div.col', { style: { gap: '16px' } }, notifCard(st), smsCard(st), watchCard(st), prefsCard(st), exportCard())));
+      h('div.col', { style: { gap: '16px' } }, appearanceCard(), notifCard(st), smsCard(st), watchCard(st), prefsCard(st), exportCard())));
+}
+
+// ---------------------------------------------------------------- appearance (per device)
+// Preview colours for each palette: [light page, light accent, dark page, dark accent]
+const PALETTES = {
+  classic: { label: 'Classic', sw: ['#f4f6f9', '#0b8a7d', '#06090f', '#36d7c7'] },
+  ocean: { label: 'Ocean', sw: ['#f1f5fb', '#1d63c9', '#050a14', '#5aa2ff'] },
+  forest: { label: 'Forest', sw: ['#f2f6f2', '#1f7a3a', '#060c08', '#4ade80'] },
+  sunset: { label: 'Sunset', sw: ['#faf6f1', '#b4540b', '#0d0906', '#ffa04d'] },
+  grape: { label: 'Grape', sw: ['#f6f4fb', '#6d3fc4', '#09060f', '#b69cff'] },
+  contrast: { label: 'High contrast', sw: ['#ffffff', '#0047b3', '#000000', '#7ab8ff'] },
+};
+function appearanceCard() {
+  const T = window.trapTheme;
+  const card = h('div.card');
+  const paint = () => {
+    const cur = T ? T.get() : { mode: 'light', palette: 'classic' };
+    const half = (bg, ac) => h('span', { style: { flex: 1, background: bg, display: 'grid', placeItems: 'center' } },
+      h('i', { style: { width: '14px', height: '14px', borderRadius: '50%', background: ac, display: 'block' } }));
+    card.replaceChildren(
+      h('div.card-h', h('h3', icon('palette'), 'Appearance'), h('span.sub', 'Saved on this device. The price charts stay black in every theme.')),
+      field('Mode', segmented([['light', 'Light'], ['dark', 'Dark'], ['system', 'Match this computer']], cur.mode, (v) => { T.set(v); paint(); })),
+      h('div', { style: { marginTop: '14px' } }, h('div.eyebrow', { style: { marginBottom: '8px' } }, 'Color theme'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: '10px' } },
+          Object.entries(PALETTES).map(([id, p]) => h('button', {
+            type: 'button', title: p.label, 'aria-pressed': String(cur.palette === id), onclick: () => { T.set(null, id); paint(); },
+            style: { padding: '0', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', background: 'var(--panel)',
+              border: cur.palette === id ? '2px solid var(--accent)' : '1px solid var(--line-2)', textAlign: 'left', color: 'var(--ink)' } },
+            h('div', { style: { display: 'flex', height: '46px' } }, half(p.sw[0], p.sw[1]), half(p.sw[2], p.sw[3])),
+            h('div', { style: { padding: '7px 10px', fontSize: '12.5px', fontWeight: cur.palette === id ? 700 : 500 } }, p.label))))));
+  };
+  if (!T) { card.replaceChildren(h('div.card-h', h('h3', icon('palette'), 'Appearance')), h('div.muted', 'Reload the page to change the theme.')); return card; }
+  paint();
+  return card;
 }
 
 // ---------------------------------------------------------------- AI analyst (Claude)

@@ -619,7 +619,7 @@ function resultView(head) {
 // ---------------------------------------------------------------- mini diagrams
 export function setupDiagram(name) {
   const s = svg('svg', { class: 'mini', viewBox: '0 0 160 64' });
-  const line = (y, c = 'rgba(15,23,42,.28)') => svg('line', { x1: 6, x2: 154, y1: y, y2: y, stroke: c, 'stroke-dasharray': '3 3' });
+  const line = (y, c = 'rgba(var(--ov),.28)') => svg('line', { x1: 6, x2: 154, y1: y, y2: y, stroke: c, 'stroke-dasharray': '3 3' });
   const path = (d, c = 'var(--accent)') => svg('path', { d, fill: 'none', stroke: c, 'stroke-width': 2.2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
   if (name === 'Spring') { put(s, line(14), line(46), path('M8,30 L30,18 L52,40 L72,24 L92,44 L104,56 L114,40 L134,22 L152,14')); put(s, svg('circle', { cx: 114, cy: 40, r: 3.5, fill: 'var(--ink)' })); }
   if (name === 'Upthrust') { put(s, line(18), line(50), path('M8,34 L30,46 L52,24 L72,40 L92,20 L104,8 L114,24 L134,42 L152,50')); put(s, svg('circle', { cx: 114, cy: 24, r: 3.5, fill: 'var(--ink)' })); }

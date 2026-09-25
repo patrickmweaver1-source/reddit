@@ -138,7 +138,7 @@ function section(title, rows, cls) {
       h('td.num', `${b.n}`), h(`td.num.${cls}`, fmt.r(b.avg_r)), h('td.num.muted', `${Math.round(b.win_rate * 100)}%`))))));
 }
 function evidenceLedger(c) {
-  const cell = (label, val, note) => h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
+  const cell = (label, val, note) => h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'rgba(var(--ov),0.027)', border: '1px solid var(--line)' } },
     h('div.eyebrow', label), h('div', { style: { fontFamily: 'var(--display)', fontSize: '20px', fontWeight: 700 } }, `${val}`), note ? h('div.muted', { style: { fontSize: '11px' } }, note) : null);
   return h('div', { style: { marginTop: '10px' } },
     h('div.grid.g4', { style: { gap: '8px' } },
@@ -153,7 +153,7 @@ function list(title, items) {
   return h('div', { style: { marginTop: '8px' } }, h('div.eyebrow', title), h('ul', { style: { margin: '4px 0 0', paddingLeft: '18px' } }, items.map(x => h('li', x))));
 }
 function tile(label, val) {
-  return h('div', { style: { padding: '10px 12px', borderRadius: '12px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
+  return h('div', { style: { padding: '10px 12px', borderRadius: '12px', background: 'rgba(var(--ov),0.027)', border: '1px solid var(--line)' } },
     h('div.eyebrow', label), h('div', { style: { fontFamily: 'var(--display)', fontSize: '22px', fontWeight: 700, marginTop: '2px' } }, val));
 }
 function ablationCard(ab) {
@@ -196,9 +196,9 @@ function executionCard(ex) {
       tile('Median drag', `${ex.median_drag_bps} bps`), tile('Median drag (R)', fmt.r(ex.median_drag_r)),
       tile('Worst (R)', fmt.r(ex.worst_drag_r)), tile('Trades measured', ex.n)),
     h('div.grid.g2', { style: { gap: '8px', marginTop: '8px' } },
-      h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
+      h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'rgba(var(--ov),0.027)', border: '1px solid var(--line)' } },
         h('div.eyebrow', 'Majors'), h('div.mono', { style: { fontSize: '13px' } }, cmp(ex.realized_bps.major, ex.modeled_bps.major))),
-      h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
+      h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'rgba(var(--ov),0.027)', border: '1px solid var(--line)' } },
         h('div.eyebrow', 'Thin assets'), h('div.mono', { style: { fontSize: '13px' } }, cmp(ex.realized_bps.thin, ex.modeled_bps.thin)))),
     h('div.help', { style: { marginTop: '8px' } }, ex.note));
 }
