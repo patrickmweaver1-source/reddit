@@ -346,7 +346,9 @@ def test_full_scan_sends_market_data_only(env):
         assert req["headers"]["x-api-key"].startswith("sk-ant-") and req["headers"]["anthropic-version"] == "2023-06-01"
         assert req["body"]["model"] == "claude-opus-5-5"
         assert req["body"]["output_config"]["format"]["type"] == "json_schema"
-        assert req["body"]["output_config"]["effort"] == "high"
+        assert req["body"]["output_config"]["effort"] == "medium"                  # default scan depth "fast"
+        assert req["body"]["thinking"] == {"type": "adaptive", "display": "summarized"}   # progress streams while it thinks
+        assert req["body"]["system"][0]["cache_control"] == {"type": "ephemeral"}
         user = req["body"]["messages"][0]["content"]
         packet = json.loads(user.split("MARKET PACKET (JSON):\n", 1)[1])
         assert packet["symbol"] == sym and packet["candles_15m_closed"]["rows"]
@@ -445,7 +447,7 @@ def test_unreadable_answer_is_still_billed_and_zero_budget_blocks(env):
         a.ai.start(sym)
         await _wait(a, sym)
         assert "not readable" in a.ai.status(sym)["error"]["message"]
-        assert a.ai.spent() == pytest.approx(0.024)          # Anthropic bills it, so the budget counts it
+        assert a.ai.spent() == pytest.approx(0.048)          # asked once more; Anthropic bills both, so the budget counts both
         a.shared.set("ai_budget_usd", 0)
         a.ai._last_start = 0
         assert a.ai.budget() == 0

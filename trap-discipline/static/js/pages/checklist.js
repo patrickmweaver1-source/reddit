@@ -237,7 +237,7 @@ function aiBody() {
   if (st.running) {
     return h('div.card.ai-card.ai-run', h('div.row', { style: { gap: '14px' } }, h('span.spinner'),
       h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 600 } }, `Claude is scanning ${st.symbol}…`),
-        h('div.muted', { style: { fontSize: '12.5px' } }, 'Reading candles, open interest, funding and levels against your checklist. Usually 30 to 90 seconds.')),
+        h('div.muted', { style: { fontSize: '12.5px' } }, st.progress ? `Claude: ${st.progress}` : 'Reading candles, open interest, funding and levels against your checklist. Usually 30 to 90 seconds.')),
       h('b.mono', { id: 'ai-elapsed' }, st.started ? `${Math.round((Date.now() - st.started) / 1000)}s` : '')));
   }
   if (st.any_ai === false && !st.last) {

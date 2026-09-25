@@ -53,7 +53,15 @@ MODELS = {
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_BUDGET_USD = 20.0
 COOLDOWN_S = 20
-RETRY_WAITS = (5, 15)            # seconds before the 2nd and 3rd attempt after a dropped connection or overload
+RETRY_WAITS = (3, 8)             # seconds before the 2nd and 3rd attempt after a dropped connection or overload
+# Scan depth = how long Claude thinks (Messages API output_config.effort). "fast" is Claude Opus 5.5's own
+# default; "deep" is what every scan used before 1.8.4 and takes roughly twice as long.
+DEPTHS = {"fast": {"effort": "medium", "label": "Fast (recommended): about 30 to 90 seconds"},
+          "deep": {"effort": "high", "label": "Deep: slower, can take several minutes"}}
+DEFAULT_DEPTH = "fast"
+SCAN_DEADLINE_S = 420            # a whole scan, retries included, never runs past 7 minutes
+ATTEMPT_TIMEOUT_S = 300          # one Claude call
+SILENCE_TIMEOUT_S = 90           # Claude's reasoning summary streams continuously; 90s of nothing is a dead link
 MAX_TOKENS = 24000
 VERDICTS = ("TRADEABLE NOW", "WATCH", "NO SETUP", "STAND DOWN")
 SETUPS = ("Spring", "Upthrust", "Sweep", "Failed retest", "None")
@@ -367,7 +375,9 @@ def _friendly(status: int, body: str) -> str:
         return ("Anthropic refused the request (403). Either the key's workspace can't use this model, or the connection "
                 "comes from a country Anthropic doesn't serve (check which country your VPN is set to)." + tail)
     if status == 402 or "credit balance" in low or "billing" in low:
-        return "Your Claude API account is out of credits. Add credits under Billing in the Claude Console, then scan again."
+        return ("Anthropic says this API key's account is out of credits. If you just added money, check it went to the "
+                "same organization and workspace as this key (Claude Console > Settings > API keys shows which), and allow a "
+                "few minutes for it to apply." + tail)
     if "spend limit" in low or "usage limit" in low or "spend cap" in low:
         return "Your Claude API spend limit is reached. Raise it in the Claude Console (Settings > Limits or your workspace), then scan again." + tail
     if status == 404 or "model" in low and "not found" in low:
@@ -388,7 +398,7 @@ class AITransient(AIError):
         self.usage = usage or {}
 
 
-async def _read_stream(resp, model: str) -> dict:
+async def _read_stream(resp, model: str, on_progress=None) -> dict:
     """Assemble a Messages API server-sent-event stream into the same shape as
     a non-streaming response. Streaming keeps the connection busy (Anthropic
     sends ping events), so a VPN or router can't drop it as idle during a long
@@ -419,6 +429,9 @@ async def _read_stream(resp, model: str) -> dict:
             b = blocks.setdefault(d.get("index", 0), {"type": "text", "text": ""})
             if delta.get("type") == "text_delta":
                 b["text"] = (b.get("text") or "") + (delta.get("text") or "")
+            elif delta.get("type") == "thinking_delta" and on_progress is not None:
+                b["thinking"] = (b.get("thinking") or "") + (delta.get("thinking") or "")
+                on_progress(b["thinking"])
         elif t == "message_delta":
             msg["stop_reason"] = (d.get("delta") or {}).get("stop_reason") or msg["stop_reason"]
             msg["usage"].update({k: v for k, v in (d.get("usage") or {}).items() if isinstance(v, (int, float))})
@@ -454,29 +467,35 @@ async def _read_stream(resp, model: str) -> dict:
 
 
 async def call_claude(session: aiohttp.ClientSession, key: str, model: str, system: str, user: str,
-                      *, structured: bool = True, effort: bool = True) -> dict:
+                      *, structured: bool = True, effort: str | bool = "medium", thinking: bool = True,
+                      on_progress=None, total_s: float = ATTEMPT_TIMEOUT_S) -> dict:
     """One streamed Messages API call. Returns the assembled response (usage
     is present on every completed answer, so the caller can bill it before
     parsing anything)."""
-    body: dict = {"model": model, "max_tokens": MAX_TOKENS, "system": system, "stream": True,
+    # The instructions never change between scans (only the market packet does): cache them, so repeat
+    # scans skip re-reading about 2,400 tokens and start answering sooner.
+    body: dict = {"model": model, "max_tokens": MAX_TOKENS, "stream": True,
+                  "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                   "messages": [{"role": "user", "content": user}]}
+    if thinking:
+        # A readable summary of Claude's reasoning streams while it thinks: the connection is never
+        # silent (a VPN can't drop it as idle) and the checklist can show live progress.
+        body["thinking"] = {"type": "adaptive", "display": "summarized"}
     oc: dict = {}
     if structured:
         oc["format"] = {"type": "json_schema", "schema": SCHEMA}
     if effort:
-        oc["effort"] = "high"
+        oc["effort"] = effort if isinstance(effort, str) else "medium"
     if oc:
         body["output_config"] = oc
     headers = {"x-api-key": key, "anthropic-version": API_VERSION, "content-type": "application/json",
                "accept": "text/event-stream"}
-    # No overall cap short of 10 minutes (the first use of the answer format can take a while to prepare);
-    # the read timeout only trips if Claude goes silent, and it sends keep-alive pings while thinking.
-    timeout = aiohttp.ClientTimeout(total=600, sock_connect=20, sock_read=180)
+    timeout = aiohttp.ClientTimeout(total=total_s, sock_connect=20, sock_read=SILENCE_TIMEOUT_S)
     try:
         async with session.post(f"{API_BASE}/v1/messages", json=body, headers=headers, timeout=timeout) as resp:
             status = resp.status
             if status == 200 and "event-stream" in resp.headers.get("Content-Type", ""):
-                data = await _read_stream(resp, model)
+                data = await _read_stream(resp, model, on_progress)
                 return {"data": data, "usage": data.get("usage") or {}, "model": data.get("model") or model}
             text = await resp.text()
     except AITransient:
@@ -484,16 +503,20 @@ async def call_claude(session: aiohttp.ClientSession, key: str, model: str, syst
     except AIError:
         raise
     except asyncio.TimeoutError as exc:
-        raise AITransient("Claude went quiet for too long and the request timed out.") from exc
+        raise AITransient("Claude took too long to answer.") from exc
     except aiohttp.ClientError as exc:
         raise AITransient("Could not reach Claude (api.anthropic.com). Check the internet connection and VPN.") from exc
-    if status == 400 and (structured or effort):
+    if status == 400 and (structured or effort or thinking):
         msg = _api_message(text)
+        kw = dict(on_progress=on_progress, total_s=total_s)
+        if thinking and re.search(r"thinking|display", msg):
+            log.info("retrying without the thinking summary (%s)", msg)
+            return await call_claude(session, key, model, system, user, structured=structured, effort=effort, thinking=False, **kw)
         if re.search(r"output_config|effort|json_schema|schema", msg):
             # Unsupported option: drop effort first; if the schema itself is the problem, drop structured output next.
             log.info("retrying without %s (%s)", "effort" if effort else "structured output", msg)
             return await call_claude(session, key, model, system, user,
-                                     structured=structured if effort else False, effort=False)
+                                     structured=structured if effort else False, effort=False, thinking=thinking, **kw)
     if status != 200:
         log.warning("claude HTTP %s: %s", status, _api_message(text) or text[:200])
         if status in (500, 502, 503, 504, 529):
@@ -506,24 +529,50 @@ async def call_claude(session: aiohttp.ClientSession, key: str, model: str, syst
     return {"data": data, "usage": data.get("usage") or {}, "model": data.get("model") or model}
 
 
+class AIUnreadable(AIError):
+    """Claude answered but the answer could not be parsed: worth one automatic retry."""
+
+
+def _json_objects(text: str):
+    """Every top-level JSON object in `text`, in order (handles fences and stray words around it)."""
+    dec = json.JSONDecoder()
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except ValueError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict):
+            yield obj
+        i = text.find("{", end)
+
+
 def parse_answer(data: dict) -> dict:
     if data.get("stop_reason") == "refusal":
         raise AIError("Claude declined this request.")
     if data.get("stop_reason") == "max_tokens":
-        raise AIError("Claude ran out of room before finishing. Scan again.")
+        raise AIUnreadable("Claude ran out of room before finishing.")
     texts = [b.get("text", "") for b in (data.get("content") or []) if isinstance(b, dict) and b.get("type") == "text"]
-    raw = (texts[-1] if texts else "").strip()
-    try:
-        out = json.loads(raw)
-    except ValueError:
-        m = re.search(r"\{.*\}", raw, re.S)       # unstructured fallback: the JSON object in the text
+    # Claude Opus 5.5 can split its answer into several text blocks with thinking in between: reading only
+    # the last block handed the parser half an answer ("Claude's answer was not readable").
+    candidates = ["".join(texts), texts[-1] if texts else "", *reversed(texts[:-1])]
+    for raw in candidates:
+        raw = re.sub(r"^\s*```(?:json)?|```\s*$", "", raw.strip()).strip()
+        if not raw:
+            continue
         try:
-            out = json.loads(m.group(0)) if m else None
+            out = json.loads(raw)
+            if isinstance(out, dict):
+                return out
         except ValueError:
-            out = None
-    if not isinstance(out, dict):
-        raise AIError("Claude's answer was not readable. Scan again.")
-    return out
+            pass
+        objs = [o for o in _json_objects(raw) if "verdict" in o] or list(_json_objects(raw))
+        if objs:
+            return max(objs, key=lambda o: len(o))
+    sample = "".join(texts)[:300].replace("\n", " ")
+    log.warning("unreadable Claude answer (stop_reason=%s, %d text blocks): %r", data.get("stop_reason"), len(texts), sample)
+    raise AIUnreadable("Claude's answer was not readable." if texts else "Claude finished without writing an answer.")
 
 
 async def validate_key(session: aiohttp.ClientSession, key: str) -> None:
@@ -711,12 +760,17 @@ class AIAnalyst:
         self.app = app
         self.running: dict[str, int] = {}      # symbol -> started ms
         self.errors: dict[str, dict] = {}
+        self.progress: dict[str, str] = {}      # symbol -> latest line of Claude's reasoning summary
         self._last_start = 0.0
 
     # settings live in the per-install shared store (the key is per-install too)
     def model(self) -> str:
         m = self.app.shared.get("ai_model")
         return m if m in MODELS else DEFAULT_MODEL
+
+    def depth(self) -> str:
+        d = self.app.shared.get("ai_depth")
+        return d if d in DEPTHS else DEFAULT_DEPTH
 
     def budget(self) -> float:
         v = self.app.shared.get("ai_budget_usd")
@@ -749,12 +803,18 @@ class AIAnalyst:
                         "max_class_label": BK.CLASS_LABEL[BK.max_class(p)], "priced": bool(BK.PROVIDERS[p]["prices"])})
         return out
 
+    def _cap_message(self) -> str:
+        return (f"TRAP's own monthly AI spending cap is reached (${self.spent():.2f} of ${self.budget():.2f} this month). "
+                "This is a limit inside this app, not your Anthropic balance: raise it in Settings > AI analyst > "
+                "Monthly budget.")
+
     def spent(self) -> float:
         return float(self.app.shared.get(f"ai_spend:{self._month()}") or 0)
 
     def info(self) -> dict:
         k = key_load()
         return {"connected": bool(k), "key_masked": key_mask(k), "model": self.model(), "budget_usd": self.budget(),
+                "depth": self.depth(), "depths": [{"id": d, "label": v["label"]} for d, v in DEPTHS.items()],
                 "spent_usd": round(self.spent(), 2), "month": self._month(),
                 "models": [{"id": m, "label": v["label"]} for m, v in MODELS.items()],
                 "storage": "os-vault" if _keyring() else "local-file", "backups": self.backups_info()}
@@ -764,6 +824,7 @@ class AIAnalyst:
         info = self.info()          # one read of each key from the vault per poll, not two
         return {"symbol": sym, "running": sym in self.running, "started": self.running.get(sym),
                 "error": self.errors.get(sym), "last": last, "connected": info["connected"], "model": info["model"],
+                "progress": self.progress.get(sym) if sym in self.running else None,
                 "any_ai": info["connected"] or any(b["connected"] for b in info["backups"])}
 
     def start(self, sym: str, recovering: bool = False) -> dict:
@@ -787,7 +848,7 @@ class AIAnalyst:
         if time.monotonic() - self._last_start < COOLDOWN_S:
             raise AIError(f"Give it {COOLDOWN_S} seconds between scans.")
         if self.spent() >= self.budget() and not any(not b["priced"] for b in backups):
-            raise AIError(f"This month's AI budget (${self.budget():.2f}) is used up. Raise it in Settings > AI analyst.")
+            raise AIError(self._cap_message())
         self._last_start = time.monotonic()
         self.running[sym] = now_ms()
         self.errors.pop(sym, None)
@@ -817,30 +878,59 @@ class AIAnalyst:
                 log.exception("trader profile")
             month_key = f"ai_spend:{self._month()}"
             resp, provider, notes, answer = None, "claude", [], None
+            t_packet = time.monotonic() - t0
             if key and self.spent() < self.budget():
                 model = self.model()
+                effort = DEPTHS[self.depth()]["effort"]
+                deadline = t0 + SCAN_DEADLINE_S
+                unreadable_retried = False
+
+                def progress(txt: str, _sym=sym) -> None:
+                    line = [x for x in re.split(r"(?<=[.!?])\s+|\n+", txt.strip()) if x.strip()]
+                    if line:
+                        self.progress[_sym] = line[-1].strip()[:200]
                 try:
                     for attempt in range(3):
+                        left = deadline - time.monotonic()
+                        if left < 45:
+                            raise AIError("Claude took too long to answer. Scan again in a minute.")
                         try:
-                            resp = await call_claude(a.http, key, model, system_prompt(th), user_message(packet))
-                            break
+                            ta = time.monotonic()
+                            resp = await call_claude(a.http, key, model, system_prompt(th), user_message(packet),
+                                                     effort=effort, on_progress=progress, total_s=min(ATTEMPT_TIMEOUT_S, left))
+                            log.info("ai scan %s: packet %.1fs, Claude %.1fs (effort %s, attempt %d, cached %s tokens)",
+                                     sym, t_packet, time.monotonic() - ta, effort, attempt + 1,
+                                     (resp.get("usage") or {}).get("cache_read_input_tokens"))
+                            # bill first: Anthropic charges for every completed response, readable or not
+                            cost = cost_usd(model, resp["usage"])
+                            self._bill(cost)
+                            try:
+                                answer = parse_answer(resp["data"])
+                                break
+                            except AIUnreadable as exc:
+                                if unreadable_retried or attempt == 2 or self.spent() >= self.budget():
+                                    raise AIError(f"{exc} Scan again.") from exc
+                                unreadable_retried = True
+                                log.warning("ai scan %s: %s Asking once more.", sym, exc)
+                                self.progress[sym] = "Claude's answer came back garbled; asking once more\u2026"
+                                resp = None
+                                continue
                         except AITransient as exc:
                             # a dropped stream may already have used tokens: count them against the budget
                             if exc.usage:
                                 self._bill(cost_usd(model, exc.usage))
-                            log.warning("ai scan attempt %d: %s", attempt + 1, exc)
+                            log.warning("ai scan %s attempt %d after %.0fs: %s", sym, attempt + 1, time.monotonic() - ta, exc)
                             if attempt == 2 or self.spent() >= self.budget():
                                 raise AIError(f"{exc} Tried 3 times.") from exc
+                            if "too long" in str(exc) or time.monotonic() - ta > 0.6 * min(ATTEMPT_TIMEOUT_S, left):
+                                effort = "low"      # the retry thinks less so it finishes, instead of repeating the same long think
+                            self.progress[sym] = "The connection hiccupped; retrying…"
                             await asyncio.sleep(RETRY_WAITS[attempt])
-                    # bill first: Anthropic charges for every completed response, readable or not
-                    cost = cost_usd(model, resp["usage"])
-                    self._bill(cost)
-                    answer = parse_answer(resp["data"])
                 except AIError as exc:
                     notes.append(f"Claude: {exc}")
                     resp, answer = None, None
             elif key:
-                notes.append("Claude: this month's AI budget is used up.")
+                notes.append(self._cap_message())
             if answer is None:
                 # backups, in order: ChatGPT (paid API) then Gemini (free tier, market data only)
                 for prov in self.backup_order():
@@ -848,7 +938,7 @@ class AIAnalyst:
                     if not bkey:
                         continue
                     if BK.PROVIDERS[prov]["prices"] and self.spent() >= self.budget():
-                        notes.append(f"{BK.PROVIDERS[prov]['label']}: this month's AI budget is used up.")
+                        notes.append(f"{BK.PROVIDERS[prov]['label']}: skipped, TRAP's monthly AI spending cap is reached.")
                         continue
                     # strip the packet to what this provider's data class allows
                     pk = BK.strip_packet_for(dict(packet), prov)
@@ -897,4 +987,5 @@ class AIAnalyst:
                                                           "Send me trap.log from your data folder."}
         finally:
             self.running.pop(sym, None)
+            self.progress.pop(sym, None)
             await a.push("ai_scan", {"symbol": sym})

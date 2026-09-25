@@ -100,6 +100,8 @@ async function fillAI(card) {
       h('div.grid.g2', { style: { gap: '12px' } },
         field('Model', h('select.input', { onchange: async (e) => { try { redo(await api.put('/api/ai/settings', { model: e.target.value }).then(r => r.data)); } catch (err) { toast('Not saved', err.message, 'warn'); } } },
           I.models.map(m => h('option', { value: m.id, selected: m.id === I.model }, m.label))), 'Opus 5.5 is the best balance. Estimated $0.10 to $0.30 a scan on Opus; the exact cost shows under each scan.'),
+        field('Scan depth', h('select.input', { onchange: async (e) => { try { redo(await api.put('/api/ai/settings', { depth: e.target.value }).then(r => r.data)); toast('Saved', '', 'good'); } catch (err) { toast('Not saved', err.message, 'warn'); } } },
+          (I.depths || []).map(d => h('option', { value: d.id, selected: d.id === I.depth }, d.label))), 'How long Claude thinks before answering. Deep can catch a little more in a messy market; Fast finishes in about half the time.'),
         field('Monthly budget (USD)', numInput(I.budget_usd, { min: 0, max: 1000, step: 1, onchange: async (e) => { try { redo(await api.put('/api/ai/settings', { budget_usd: e.target.value }).then(r => r.data)); toast('Budget saved', '', 'good'); } catch (err) { toast('Not saved', err.message, 'warn'); } } }),
           'Scans stop for the month when this is reached.')),
       h('div', { style: { marginTop: '10px' } },

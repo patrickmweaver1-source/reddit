@@ -855,6 +855,10 @@ async def ai_settings(request):
         if b["model"] not in AI.MODELS:
             return fail("Unknown model")
         a.shared.set("ai_model", b["model"])
+    if "depth" in b:
+        if b["depth"] not in AI.DEPTHS:
+            return fail("Unknown scan depth")
+        a.shared.set("ai_depth", b["depth"])
     for prov in BK.PROVIDERS:
         if f"model_{prov}" in b:
             m = str(b[f"model_{prov}"] or "").strip()

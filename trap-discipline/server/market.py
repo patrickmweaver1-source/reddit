@@ -76,15 +76,17 @@ class MarketEngine:
             self._task = None
 
     async def _loop(self) -> None:
+        async def one(sym: str) -> None:
+            try:
+                await self.refresh(sym)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("refresh %s failed: %s", sym, exc)
+                self.sd(sym).errors = [str(exc)[:200]]
         while True:
-            for sym in list(self.watchlist()):
-                try:
-                    await self.refresh(sym)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("refresh %s failed: %s", sym, exc)
-                    self.sd(sym).errors = [str(exc)[:200]]
+            # every coin at once: one slow coin no longer holds the others' data back
+            await asyncio.gather(*(one(sym) for sym in list(self.watchlist())))
             try:
                 self.flush_liquidations()
             except Exception as exc:  # noqa: BLE001
@@ -96,6 +98,18 @@ class MarketEngine:
         return time.time() - s.last.get(key, 0) >= every
 
     async def refresh(self, sym: str, force: bool = False) -> dict:
+        """One refresh per coin at a time: the market loop, a page and an AI scan asking at the
+        same moment share it instead of each downloading the same data. A caller that gives up
+        (page closed) does not cancel it for the others."""
+        inflight = self.__dict__.setdefault("_inflight", {})
+        t = inflight.get(sym)
+        if t is None or t.done():
+            t = asyncio.ensure_future(self._refresh(sym, force))
+            t.add_done_callback(lambda f: f.cancelled() or f.exception())    # never "exception was never retrieved"
+            inflight[sym] = t
+        return await asyncio.shield(t)
+
+    async def _refresh(self, sym: str, force: bool = False) -> dict:
         s = self.sd(sym)
         errs: list[str] = []
 
@@ -150,17 +164,11 @@ class MarketEngine:
             for r in rows:
                 self.add_trade(sym, int(r["time"]), r["side"], float(r["size"]))
 
-        await guard("inst", 3600, inst)
-        await guard("tick", 15, tick)
-        await guard("k15", 55, k15)
-        await guard("k60", 300, k60)
-        await guard("k240", 900, k240)
-        await guard("kD", 1800, kD)
-        await guard("kW", 3600, kW)
-        await guard("oi", 240, oi)
-        await guard("fund", 3600, fund)
-        await guard("ratio", 900, ratio)
-        await guard("cvd", 3600, cvd_seed)
+        # independent downloads, all at once (a new coin's first load was 11 round trips in a row)
+        await asyncio.gather(
+            guard("inst", 3600, inst), guard("tick", 15, tick), guard("k15", 55, k15), guard("k60", 300, k60),
+            guard("k240", 900, k240), guard("kD", 1800, kD), guard("kW", 3600, kW), guard("oi", 240, oi),
+            guard("fund", 3600, fund), guard("ratio", 900, ratio), guard("cvd", 3600, cvd_seed))
         s.errors = errs
         snap = self.compute(sym)
         await self._state_alerts(sym, snap)
