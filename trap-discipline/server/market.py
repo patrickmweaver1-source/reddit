@@ -110,6 +110,10 @@ class MarketEngine:
         return await asyncio.shield(t)
 
     async def _refresh(self, sym: str, force: bool = False) -> dict:
+        # Market data is what every page and scan waits on: it always goes ahead of background
+        # downloads (journal backfill, auto-tune history), whoever started this refresh.
+        from .bybit import INTERACTIVE
+        INTERACTIVE.set(True)
         s = self.sd(sym)
         errs: list[str] = []
 

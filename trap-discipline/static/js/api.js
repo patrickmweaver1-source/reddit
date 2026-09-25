@@ -27,8 +27,20 @@ async function req(method, path, body) {
   return data;
 }
 
+// A coin's market data can still be loading right after TRAP starts: the server says so (503,
+// loading) instead of making the page wait, and the page asks again by itself.
+async function getWithRetry(p) {
+  for (let i = 0; ; i++) {
+    try { return (await req('GET', p)).data; }
+    catch (e) {
+      if (!(e.status === 503 && e.payload && e.payload.loading) || i >= 5) throw e;
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+}
+
 export const api = {
-  get: (p) => req('GET', p).then(r => r.data),
+  get: (p) => getWithRetry(p),
   raw: (p) => req('GET', p),
   post: (p, b = {}) => req('POST', p, b),
   put: (p, b = {}) => req('PUT', p, b),

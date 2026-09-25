@@ -221,9 +221,16 @@ async def market_symbol(request):
     BY.INTERACTIVE.set(True)
     if not sd.snapshot:
         try:
-            await a.market.refresh(sym, force=True)
+            # a coin's first load right after start can queue behind start-up work: never hold a page
+            # longer than 20 seconds; it says "still loading" and the page tries again by itself
+            await asyncio.wait_for(asyncio.shield(a.market.refresh(sym, force=True)), timeout=20)
+        except asyncio.TimeoutError:
+            return fail(f"{sym} market data is still loading (the first load after starting TRAP can take a moment). "
+                        "Trying again automatically.", 503, loading=True)
         except BybitError as exc:
             return fail(str(exc), 502)
+        if not sd.snapshot:
+            return fail(f"{sym} market data is still loading. Trying again automatically.", 503, loading=True)
     return ok(sd.snapshot)
 
 
