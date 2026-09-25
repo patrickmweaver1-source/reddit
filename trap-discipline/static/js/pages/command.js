@@ -72,7 +72,7 @@ function sessionCard(st, ctx) {
       miniStat('calendar-days', 'Macro event today?', '', h('span', macroToggle(st, ctx)))));
 }
 function miniStat(ic, label, pre, val) {
-  return h('div', { style: { padding: '10px 12px', borderRadius: '11px', background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' } },
+  return h('div', { style: { padding: '10px 12px', borderRadius: '11px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
     h('div.eyebrow', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, icon(ic, 'sm'), label),
     h('div', { style: { marginTop: '6px', fontWeight: 600 } }, pre ? `${pre} ` : '', val));
 }
@@ -113,7 +113,7 @@ function disciplineCard(st, ctx) {
       streakBox('clock-3', 'Fresh logs', g.streaks.fresh, null, 'in a row')));
 }
 function streakBox(ic, label, n, best, unit) {
-  return h('div', { style: { padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' } },
+  return h('div', { style: { padding: '12px', borderRadius: '12px', background: 'rgba(15,23,42,0.027)', border: '1px solid var(--line)' } },
     h('div.eyebrow', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, icon(ic, 'sm'), label),
     h('div', { style: { fontFamily: 'var(--display)', fontSize: '26px', fontWeight: 700, marginTop: '4px', color: n >= 3 ? '#ffb34d' : 'var(--ink)' } }, n, h('small.muted', { style: { fontSize: '12px', marginLeft: '6px', fontWeight: 500 } }, unit)),
     best !== null ? h('div.muted', { style: { fontSize: '11.5px' } }, `best ${best}`) : null);

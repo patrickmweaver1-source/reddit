@@ -469,7 +469,7 @@ function penBracket(pen, floor, abandon = 1) {
   const top = Math.max(1.4, abandon * 1.4, (pen || 0) * 1.1);   // scale grows with the rulebook and the reading
   const W = 600; const Hh = 64; const X = (v) => 20 + Math.min(top, Math.max(0, v)) / top * (W - 40);
   const f = (v) => (Number.isInteger(+v) ? (+v).toFixed(1) : String(+v));   // 1 -> "1.0", 0.25 -> "0.25"
-  return h('div.fig', { style: { background: '#0a0f16', border: '1px solid var(--line)', borderRadius: '12px', padding: '10px' } },
+  return h('div.fig.dark-zone', { style: { background: '#0a0f16', border: '1px solid var(--line)', borderRadius: '12px', padding: '10px' } },
     svg('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%' },
       svg('rect', { x: X(0), y: 22, width: X(floor) - X(0), height: 14, rx: 4, fill: 'rgba(239,75,75,.25)' }),
       svg('rect', { x: X(floor), y: 22, width: X(abandon) - X(floor), height: 14, rx: 4, fill: 'rgba(54,215,199,.28)' }),
@@ -619,16 +619,16 @@ function resultView(head) {
 // ---------------------------------------------------------------- mini diagrams
 export function setupDiagram(name) {
   const s = svg('svg', { class: 'mini', viewBox: '0 0 160 64' });
-  const line = (y, c = 'rgba(255,255,255,.25)') => svg('line', { x1: 6, x2: 154, y1: y, y2: y, stroke: c, 'stroke-dasharray': '3 3' });
+  const line = (y, c = 'rgba(15,23,42,.28)') => svg('line', { x1: 6, x2: 154, y1: y, y2: y, stroke: c, 'stroke-dasharray': '3 3' });
   const path = (d, c = 'var(--accent)') => svg('path', { d, fill: 'none', stroke: c, 'stroke-width': 2.2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
-  if (name === 'Spring') { put(s, line(14), line(46), path('M8,30 L30,18 L52,40 L72,24 L92,44 L104,56 L114,40 L134,22 L152,14')); put(s, svg('circle', { cx: 114, cy: 40, r: 3.5, fill: '#fff' })); }
-  if (name === 'Upthrust') { put(s, line(18), line(50), path('M8,34 L30,46 L52,24 L72,40 L92,20 L104,8 L114,24 L134,42 L152,50')); put(s, svg('circle', { cx: 114, cy: 24, r: 3.5, fill: '#fff' })); }
+  if (name === 'Spring') { put(s, line(14), line(46), path('M8,30 L30,18 L52,40 L72,24 L92,44 L104,56 L114,40 L134,22 L152,14')); put(s, svg('circle', { cx: 114, cy: 40, r: 3.5, fill: 'var(--ink)' })); }
+  if (name === 'Upthrust') { put(s, line(18), line(50), path('M8,34 L30,46 L52,24 L72,40 L92,20 L104,8 L114,24 L134,42 L152,50')); put(s, svg('circle', { cx: 114, cy: 24, r: 3.5, fill: 'var(--ink)' })); }
   if (name === 'Sweep') {
     put(s, line(44));
     put(s, path('M8,20 L40,30 L70,36 L100,38'));
     put(s, svg('line', { x1: 112, x2: 112, y1: 24, y2: 60, stroke: 'var(--s8)', 'stroke-width': 2 }), svg('rect', { x: 107, y: 28, width: 10, height: 10, fill: 'var(--s3)' }));
     put(s, path('M118,32 L152,14'));
   }
-  if (name === 'Failed retest') { put(s, line(34)); put(s, path('M8,50 L30,44 L50,40 L66,22 L82,16 L100,26 L112,30 L120,40 L138,50 L152,56')); put(s, svg('circle', { cx: 120, cy: 40, r: 3.5, fill: '#fff' })); }
+  if (name === 'Failed retest') { put(s, line(34)); put(s, path('M8,50 L30,44 L50,40 L66,22 L82,16 L100,26 L112,30 L120,40 L138,50 L152,56')); put(s, svg('circle', { cx: 120, cy: 40, r: 3.5, fill: 'var(--ink)' })); }
   return s;
 }

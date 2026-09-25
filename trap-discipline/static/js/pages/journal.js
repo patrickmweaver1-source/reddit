@@ -279,7 +279,7 @@ function tradeChart(t) {
     const i = cs.findIndex(k => k.t + 900000 > l.t); if (i < 0) return;
     put(s, svg('circle', { cx: X(i), cy: Y(l.price), r: 5, fill: l.kind === 'entry' ? '#36d7c7' : '#f4c24f', stroke: '#0a0f16', 'stroke-width': 2 }));
   });
-  return h('div', { style: { border: '1px solid var(--line)', borderRadius: '12px', padding: '8px', background: '#0a0f16' } }, s,
+  return h('div.dark-zone', { style: { border: '1px solid var(--line)', borderRadius: '12px', padding: '8px', background: '#0a0f16' } }, s,
     h('div.legend', { style: { fontSize: '11px' } }, h('span', h('i', { style: { background: '#36d7c7' } }), 'entry / add'), h('span', h('i', { style: { background: '#f4c24f' } }), 'exit fills'), h('span', h('i', { style: { background: 'var(--warn)' } }), 'candle-four deadline')));
 }
 

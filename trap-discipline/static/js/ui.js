@@ -222,7 +222,7 @@ export function ring(value, { size = 132, stroke = 11, color = 'var(--accent)', 
   const r = (size - stroke) / 2; const c = 2 * Math.PI * r;
   const pct = value === null || value === undefined ? 0 : Math.max(0, Math.min(1, value / max));
   const s = svg('svg', { width: size, height: size, viewBox: `0 0 ${size} ${size}` },
-    svg('circle', { cx: size / 2, cy: size / 2, r, fill: 'none', stroke: 'rgba(255,255,255,.07)', 'stroke-width': stroke }),
+    svg('circle', { cx: size / 2, cy: size / 2, r, fill: 'none', stroke: 'rgba(15,23,42,0.063)', 'stroke-width': stroke }),
     svg('circle', { cx: size / 2, cy: size / 2, r, fill: 'none', stroke: color, 'stroke-width': stroke, 'stroke-linecap': 'round',
       'stroke-dasharray': `${c}`, 'stroke-dashoffset': `${c}`, style: `transition: stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1); filter: drop-shadow(0 0 6px ${color})` }));
   const wrap = h('div.ring', s, h('div.lbl', h('b', label), sub ? h('span', sub) : null));

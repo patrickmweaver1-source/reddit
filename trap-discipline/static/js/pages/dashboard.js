@@ -91,11 +91,11 @@ function calendar(days) {
   const cells = [];
   for (let d = new Date(start); d <= today; d.setUTCDate(d.getUTCDate() + 1)) {
     const key = d.toISOString().slice(0, 10); const e = map[key];
-    let bg = 'rgba(255,255,255,.035)';
+    let bg = 'rgba(15,23,42,0.0315)';
     if (e && e.n) { const a = Math.min(1, Math.abs(e.r) / 3) * 0.75 + 0.15; bg = e.r >= 0 ? `rgba(25,158,112,${a})` : `rgba(230,103,103,${a})`; }
     else if (e && e.skipped) bg = 'rgba(139,123,255,.18)';
     const clean = e && e.n && e.clean === e.n;
-    cells.push(h(`div.d${key === today.toISOString().slice(0, 10) ? '.today' : ''}`, { style: { background: bg, boxShadow: clean ? 'inset 0 0 0 2px rgba(255,255,255,.55)' : undefined }, title: e ? `${key}: ${e.n} trades, ${fmt.r(e.r)}, ${e.clean}/${e.n} clean, ${e.skipped} skipped` : key }, h('span', d.getUTCDate())));
+    cells.push(h(`div.d${key === today.toISOString().slice(0, 10) ? '.today' : ''}`, { style: { background: bg, boxShadow: clean ? 'inset 0 0 0 2px rgba(15,23,42,0.495)' : undefined }, title: e ? `${key}: ${e.n} trades, ${fmt.r(e.r)}, ${e.clean}/${e.n} clean, ${e.skipped} skipped` : key }, h('span', d.getUTCDate())));
   }
   return h('div', h('div.heat', ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => h('div.muted', { style: { fontSize: '11px', textAlign: 'center' } }, x)), cells),
     h('div.legend', { style: { marginTop: '10px' } }, h('span', h('i', { style: { background: 'rgba(25,158,112,.7)' } }), 'positive R'), h('span', h('i', { style: { background: 'rgba(230,103,103,.7)' } }), 'negative R'), h('span', h('i', { style: { background: 'rgba(139,123,255,.3)' } }), 'passes only')));
