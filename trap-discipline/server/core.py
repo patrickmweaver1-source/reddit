@@ -587,7 +587,7 @@ class TrapApp:
         if not t.get("taken"):
             if t.get("reviewed_at"):
                 G.award(self.db, "skip_logged", f"skip:{tid}", ref=f"trade:{tid}", ts=t["reviewed_at"])
-            await self._after_xp()
+            self._after_xp_soon()
             return t
         fee = self.settings().get("taker_fee_pct") or th["taker_fee_pct"]
         t.update(compute_metrics(t, fee))
@@ -645,10 +645,26 @@ class TrapApp:
                 n_major = sum(1 for v in active if v["severity"] == "major")
                 if n_major:
                     G.award(self.db, "violation_major", f"viol:{tid}", ref=f"trade:{tid}", xp=G.XP["violation_major"] * n_major, ts=ts)
-        await self._after_xp()
+        self._after_xp_soon()
         t = self.db.trade(tid)
         await self.push("trade", t)
         return t
+
+    def _after_xp_soon(self) -> None:
+        """Badges, level and streaks re-read the whole journal. A journal sync evaluates every trade in
+        turn, and running this after each one froze the app for a minute on a long journal (the cost grew
+        with the square of the trade count). Batch it: once, a moment after the last change."""
+        if self.__dict__.get("_xp_pending"):
+            return
+        self._xp_pending = True
+
+        async def later():
+            try:
+                await asyncio.sleep(1.0)
+            finally:
+                self._xp_pending = False
+            self._after_xp_soon()
+        self._spawn(later())
 
     async def _after_xp(self) -> None:
         for b in G.check_badges(self.db):
