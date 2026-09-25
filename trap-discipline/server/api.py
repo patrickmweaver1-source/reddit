@@ -122,13 +122,35 @@ async def state(request):
         "positions": list(acct.positions.values()) if acct else [],
         "wallet": acct.wallet if acct else None,
         "open_trades": a.db.trades("status='open' AND taken=1"),
-        "unreviewed": a.db.trades("status='closed' AND taken=1 AND reviewed_at IS NULL", order="closed_at DESC"),
-        "game": {"level": G.level_for(G.total_xp(a.db)), "streaks": G.streaks(a.db), "discipline": G.discipline_score(a.db),
-                 "quests": G.quests(a.db)},
+        # Every tab asks for this every 8 seconds. It used to carry every unreviewed trade in
+        # full (about 1 KB each, forever growing); the pages show five and a count.
+        "unreviewed": [{k: t.get(k) for k in ("id", "symbol", "direction", "r", "closed_at")}
+                       for t in a.db.trades("status='closed' AND taken=1 AND reviewed_at IS NULL", order="closed_at DESC LIMIT 5")],
+        "unreviewed_count": a.db.one("SELECT COUNT(*) AS n FROM trades WHERE status='closed' AND taken=1 AND reviewed_at IS NULL")["n"],
+        "game": _game_block(a),
         "coach": a.coach.recent(30),
         "mantra": a.coach.mantra(int(now_ms() // 86_400_000)),
         "watch": a.market.overview() if a.market else [],
     })
+
+
+_GAME_CACHE: dict = {"key": None, "at": 0.0, "val": None}
+
+
+def _game_block(a) -> dict:
+    """Level, streaks, discipline and quests scan the whole XP and trade history. Reuse the
+    answer until something changes (a new XP event or trade edit) or 30 seconds pass."""
+    row = a.db.one("SELECT (SELECT COALESCE(MAX(id),0) FROM xp_events) AS xp, (SELECT COUNT(*) FROM trades) AS nt, "
+                   "(SELECT COALESCE(MAX(updated_at),0) FROM trades) AS tu, (SELECT COALESCE(MAX(ts),0) FROM checkins) AS ci, "
+                   "(SELECT COALESCE(MAX(ts),0) FROM study_progress) AS sp")
+    key = (id(a.db), tuple(row.values()), datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    c = _GAME_CACHE
+    if c["key"] == key and time.monotonic() - c["at"] < 30:
+        return c["val"]
+    val = {"level": G.level_for(G.total_xp(a.db)), "streaks": G.streaks(a.db), "discipline": G.discipline_score(a.db),
+           "quests": G.quests(a.db)}
+    c.update(key=key, at=time.monotonic(), val=val)
+    return val
 
 
 def connection_info(a) -> dict:

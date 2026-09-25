@@ -67,7 +67,7 @@ function renderNav() {
   const nav = document.getElementById('nav');
   clear(nav);
   let sec = null;
-  const unreviewed = ctx.state?.unreviewed?.length || 0;
+  const unreviewed = ctx.state?.unreviewed_count ?? ctx.state?.unreviewed?.length ?? 0;
   for (const [key, p] of Object.entries(PAGES)) {
     if (p.sec !== sec) { sec = p.sec; nav.appendChild(h('div.nav-sec', sec)); }
     const a = h(`a${ctx.current === key ? '.active' : ''}`, { href: `#/${key}`, title: p.title }, icon(p.icon), h('span', p.title));

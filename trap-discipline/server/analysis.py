@@ -12,6 +12,7 @@ Automated classification is decision support, not a signal. The UI labels it
 from __future__ import annotations
 
 import math
+from bisect import bisect_left, bisect_right
 from statistics import median
 from typing import Iterable
 
@@ -214,7 +215,7 @@ def detect_levels(c1h: list[dict], c4h: list[dict], cD: list[dict], cW: list[dic
         else:
             clusters.append({"_prices": [p], "sources": {s}, "_last": p})
 
-    liq_prices = list(liq_prices)
+    liq_prices = sorted(liq_prices)      # counted by binary search below: cost no longer grows with levels x prints
     out = []
     for cl in clusters:
         srcs = cl["sources"]
@@ -223,7 +224,7 @@ def detect_levels(c1h: list[dict], c4h: list[dict], cD: list[dict], cW: list[dic
         touches = _touches(c1h[-336:], lvl, max(0.35 * atr15, price * 0.0005)) if c1h else 0
         if touches >= 3:
             srcs = srcs | {"range"}
-        liq_near = sum(1 for lp in liq_prices if abs(lp - lvl) <= tol * 2)
+        liq_near = bisect_right(liq_prices, lvl + tol * 2) - bisect_left(liq_prices, lvl - tol * 2)
         htf = bool(srcs & {"4h", "1d", "1w", "range"})
         if "4h" in srcs and touches >= 3 and liq_near >= 3:
             c1 = 2

@@ -252,7 +252,11 @@ class TrapApp:
         elif topic.startswith("allLiquidation."):
             for lq in data or []:
                 self.market.add_liquidation(sym, int(lq["T"]), lq["S"], float(lq["v"]), float(lq["p"]))
-            await self.push("liquidation", {"symbol": sym, "data": data})
+            # no page draws these live; at most one note per coin every 5s instead of one per batch
+            last = self._flags.get(f"liq_push:{sym}", 0.0)
+            if time.monotonic() - last >= 5:
+                self._flags[f"liq_push:{sym}"] = time.monotonic()
+                await self.push("liquidation", {"symbol": sym, "data": data})
         elif topic.startswith("kline."):
             for k in data or []:
                 self.market.on_kline(sym, k)
@@ -320,7 +324,7 @@ class TrapApp:
                     out["failed"] += 1
                     log.info("push failed to %s: %s", sub.get("label") or sub["endpoint"][:40], err)
         if self.settings()["sms_enabled"]:
-            creds = SMS.load()
+            creds = await asyncio.to_thread(SMS.load)     # an OS vault read must never stall the server
             if creds:
                 ok, err = await SMS.send_sms(self.http, creds, f"{title}\n{body}" if body else title)
                 if ok:

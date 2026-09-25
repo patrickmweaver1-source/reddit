@@ -56,6 +56,7 @@ WS_ALLOWED_OPS = frozenset({"auth", "subscribe", "ping"})
 # request is waiting for its turn, so a page never queues behind a long download.
 INTERACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar("bybit_interactive", default=False)
 PACE_S = 0.05     # about 20 requests a second, a sixth of Bybit's 600 per 5 seconds per IP
+WS_SILENCE_S = 60  # a live stream quiet this long is treated as dead and reconnected
 HEDGE_S = 2.5     # a public read slower than this for a waiting page gets one duplicate request
 PRIVATE_TOPICS = ("position", "execution", "order", "wallet")
 
@@ -233,7 +234,7 @@ class BybitREST:
         raise BybitError(-3, "exhausted retries", path)
 
     async def _fetch(self, url: str, headers: dict, path: str) -> tuple[dict, str | None]:
-        async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15, sock_connect=6, sock_read=10)) as resp:
             if resp.status == 403:
                 text = (await resp.text())[:200]
                 self.last_error = "HTTP 403 from Bybit (access denied: IP/region block or rate-limit ban)."
@@ -398,7 +399,16 @@ class BybitWS:
                     backoff = 1.0
                     pinger = asyncio.create_task(self._ping_loop())
                     try:
-                        async for msg in ws:
+                        while True:
+                            # A connection that died silently (laptop slept, VPN switched) never
+                            # closes on its own: prices would freeze until the app was restarted.
+                            # Bybit answers our ping every 20s, so a minute of silence means dead.
+                            try:
+                                msg = await ws.receive(timeout=WS_SILENCE_S)
+                            except asyncio.TimeoutError:
+                                self.last_error = f"no data for {WS_SILENCE_S}s; reconnecting"
+                                log.warning("%s: %s", self.name, self.last_error)
+                                break
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 self.last_msg_at = time.time()
                                 data = json.loads(msg.data)
@@ -411,7 +421,8 @@ class BybitWS:
                                         await self.handler(data)
                                     except Exception:  # noqa: BLE001
                                         log.exception("%s handler error", self.name)
-                            elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                            elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING,
+                                              aiohttp.WSMsgType.CLOSE):
                                 break
                     finally:
                         pinger.cancel()

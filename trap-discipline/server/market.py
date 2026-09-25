@@ -32,11 +32,19 @@ class SymbolData:
         self.errors: list[str] = []
         self.states: dict[str, str] = {}
         self.snapshot: dict = {}
+        self.liqs: list[dict] | None = None    # last LIQ_WINDOW_MS of liquidations, in memory (loaded once)
+
+
+LIQ_WINDOW_MS = 3 * 86_400_000       # what the levels and the heatmap look at
+LIQ_KEEP_MS = 7 * 86_400_000         # what the database keeps
+LIQ_MAX_IN_MEMORY = 50_000           # per symbol, a hard ceiling whatever the market does (about 15 MB)
 
 
 class MarketEngine:
     def __init__(self, db: DB, source: Any, get_settings: Callable[[], dict], notify: Callable[..., Any]):
         self.db = db
+        self._liq_pending: list[tuple] = []
+        self._liq_pruned_at = 0.0
         self.src = source            # BybitREST or DemoSource (same method names)
         self.get_settings = get_settings
         self.notify = notify         # async callback(kind, payload)
@@ -58,6 +66,7 @@ class MarketEngine:
             self._task = asyncio.create_task(self._loop(), name="market-loop")
 
     async def stop(self) -> None:
+        self.flush_liquidations()
         if self._task:
             self._task.cancel()
             try:
@@ -76,6 +85,10 @@ class MarketEngine:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("refresh %s failed: %s", sym, exc)
                     self.sd(sym).errors = [str(exc)[:200]]
+            try:
+                self.flush_liquidations()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("saving liquidations failed: %s", exc)
             await asyncio.sleep(20)
 
     # ------------------------------------------------------------------
@@ -198,7 +211,52 @@ class MarketEngine:
                 s.cvd_dropped += buy - sell     # keeps the running total anchored at app start
 
     def add_liquidation(self, sym: str, ts: int, side: str, size: float, price: float) -> None:
-        self.db.execute("INSERT INTO liquidations(symbol,ts,side,size,price) VALUES(?,?,?,?,?)", (sym, ts, side, size, price))
+        # Kept in memory and written to disk in batches. Writing each print on its own (one disk
+        # flush apiece, thousands an hour in a busy market) and re-reading three days of them on
+        # every update made the app slower the longer it ran.
+        self._liq_pending.append((sym, ts, side, size, price))
+        s = self.sd(sym)
+        if s.liqs is not None:
+            s.liqs.append({"ts": ts, "side": side, "size": size, "price": price})
+        if len(self._liq_pending) >= 2000:
+            self.flush_liquidations()
+
+    def flush_liquidations(self) -> None:
+        """Write buffered liquidations in one transaction; once an hour drop ones older than a week."""
+        rows, self._liq_pending = self._liq_pending, []
+        now = time.time()
+        prune = now - self._liq_pruned_at > 3600
+        if not rows and not prune:
+            return
+        with self.db.lock:
+            c = self.db.conn
+            c.execute("BEGIN")
+            try:
+                if rows:
+                    c.executemany("INSERT INTO liquidations(symbol,ts,side,size,price) VALUES(?,?,?,?,?)", rows)
+                if prune:
+                    c.execute("DELETE FROM liquidations WHERE ts<?", (now_ms() - LIQ_KEEP_MS,))
+                c.execute("COMMIT")
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+        if prune:
+            self._liq_pruned_at = now
+
+    def _recent_liqs(self, sym: str) -> list[dict]:
+        s = self.sd(sym)
+        since = now_ms() - LIQ_WINDOW_MS
+        if s.liqs is None:
+            self.flush_liquidations()        # so the one-time load below sees every print so far
+            s.liqs = self.db.query("SELECT ts, side, size, price FROM liquidations WHERE symbol=? AND ts>=? ORDER BY ts", (sym, since))
+        liqs = s.liqs
+        if liqs and (liqs[0]["ts"] < since or len(liqs) > LIQ_MAX_IN_MEMORY):
+            i = 0
+            while i < len(liqs) and liqs[i]["ts"] < since:
+                i += 1
+            i = max(i, len(liqs) - LIQ_MAX_IN_MEMORY)
+            del liqs[:i]
+        return liqs
 
     # ------------------------------------------------------------------
     def settings_for(self, sym: str) -> tuple[dict, bool]:
@@ -212,8 +270,7 @@ class MarketEngine:
         tk = s.ticker
         price = float(tk.get("lastPrice") or 0) or (s.live15 or (c15[-1] if c15 else {})).get("c", 0)
         atr15 = A.atr(c15, 14) if len(c15) > 15 else None
-        since = now_ms() - 3 * 86_400_000
-        liqs = self.db.query("SELECT ts, side, size, price FROM liquidations WHERE symbol=? AND ts>=? ORDER BY ts", (sym, since))
+        liqs = self._recent_liqs(sym)
         levels = A.detect_levels(c1h, c4h, cD, cW, price, atr15 or 0, [x["price"] for x in liqs]) if atr15 else []
         floor = th["pen_floor_atr_thin"] if thin else th["pen_floor_atr"]
         for lv in levels:
