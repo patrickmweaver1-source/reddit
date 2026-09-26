@@ -4,8 +4,15 @@ import { h, icon, clear, svg, toast, confetti, sound, put } from '../ui.js';
 import { VOI } from '../study/voi.js';
 import { SCHWAGER } from '../study/schwager.js';
 import { MANUAL } from '../study/manual.js';
+import { CHARTS } from '../study/charts.js';
+import { STOPS } from '../study/stops.js';
+import { OBJECTIVES } from '../study/objectives.js';
+import { TRENDS } from '../study/trends.js';
+import { VARIATIONS } from '../study/variations.js';
 
-const GUIDES = [MANUAL, VOI, SCHWAGER];
+// Order is the suggested course: the app first, then the Schwager foundations, then the specialist guides.
+const COURSE = { charts: 1, stops: 2, objectives: 3, trends: 4, variations: 5 };   // the Schwager foundations, in reading order
+const GUIDES = [MANUAL, CHARTS, STOPS, OBJECTIVES, TRENDS, VARIATIONS, SCHWAGER, VOI];
 let root = null; let ctxRef = null; let prog = {};
 
 export async function render(el, ctx) {
@@ -41,6 +48,10 @@ function cover(g) {
     put(s, svg('line', { x1: x, x2: x, y1: Math.min(o, c) - 6, y2: Math.max(o, c) + 6, stroke: 'rgba(255,255,255,.45)' }));
     put(s, svg('rect', { x: x - 3, y: Math.min(o, c), width: 6, height: Math.max(2, Math.abs(o - c)), fill: c < o ? 'rgba(25,158,112,.9)' : 'rgba(230,103,103,.9)' }));
     y = c; x += 11;
+  }
+  if (COURSE[g.id]) {
+    put(s, svg('text', { x: 16, y: 30, fill: '#fff', 'font-size': 11, 'font-weight': 700, 'letter-spacing': '.14em', opacity: 0.85 }, 'FOUNDATIONS'),
+      svg('text', { x: 14, y: 76, fill: '#fff', 'font-size': 44, 'font-weight': 800, opacity: 0.9 }, `${COURSE[g.id]}/5`));
   }
   if (g.id === 'voi') for (let i = 0; i < 26; i++) put(s, svg('rect', { x: 7 + i * 11, y: 150 - (8 + Math.abs(Math.sin(i * 1.3)) * 22), width: 6, height: 8 + Math.abs(Math.sin(i * 1.3)) * 22, fill: 'rgba(57,135,229,.6)' }));
   return s;
