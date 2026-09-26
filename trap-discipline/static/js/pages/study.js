@@ -3,8 +3,9 @@ import { api } from '../api.js';
 import { h, icon, clear, svg, toast, confetti, sound, put } from '../ui.js';
 import { VOI } from '../study/voi.js';
 import { SCHWAGER } from '../study/schwager.js';
+import { MANUAL } from '../study/manual.js';
 
-const GUIDES = [VOI, SCHWAGER];
+const GUIDES = [MANUAL, VOI, SCHWAGER];
 let root = null; let ctxRef = null; let prog = {};
 
 export async function render(el, ctx) {
@@ -22,6 +23,17 @@ function cover(g) {
   const s = svg('svg', { viewBox: '0 0 300 150', preserveAspectRatio: 'xMidYMid slice' });
   const defs = svg('defs', {}, svg('linearGradient', { id: `cg-${g.id}`, x1: 0, y1: 0, x2: 1, y2: 1 }, svg('stop', { offset: '0', 'stop-color': g.accent, 'stop-opacity': '.55' }), svg('stop', { offset: '1', 'stop-color': '#0a0f16' })));
   put(s, defs, svg('rect', { width: 300, height: 150, fill: `url(#cg-${g.id})` }));
+  if (g.id === 'manual') {   // the app's own loop: plan, check, trade, review, level up
+    const nodes = ['Plan', 'Check', 'Trade', 'Review', 'Level'];
+    nodes.forEach((n, i) => {
+      const a = (i / nodes.length) * Math.PI * 2 - Math.PI / 2; const cx = 150 + Math.cos(a) * 46; const cy = 80 + Math.sin(a) * 46;
+      const b = ((i + 1) / nodes.length) * Math.PI * 2 - Math.PI / 2;
+      put(s, svg('line', { x1: cx, y1: cy, x2: 150 + Math.cos(b) * 46, y2: 80 + Math.sin(b) * 46, stroke: 'rgba(255,255,255,.35)', 'stroke-width': 2 }),
+        svg('circle', { cx, cy, r: 19, fill: 'rgba(10,15,22,.85)', stroke: g.accent, 'stroke-width': 2 }),
+        svg('text', { x: cx, y: cy + 3.5, 'text-anchor': 'middle', 'font-size': 8.5, 'font-weight': 600, fill: '#e8eef5' }, n));
+    });
+    return s;
+  }
   let x = 10; let y = 90;
   for (let i = 0; i < 26; i++) {
     const d = Math.sin(i * (g.id === 'voi' ? 0.7 : 1.1)) * 12 + (i > 15 && g.id !== 'voi' ? -(i - 15) * 3 : 0);
@@ -48,7 +60,7 @@ function library() {
           h('div.bar.accent', { style: { marginTop: '8px' } }, h('i', { style: { width: `${Math.round(p * 100)}%` } }))));
     }),
     h('div.card', { style: { display: 'grid', placeItems: 'center', textAlign: 'center', borderStyle: 'dashed', minHeight: '260px' } },
-      h('div', icon('lightbulb', 'xl'), h('h3', { style: { marginTop: '8px' } }, 'More guides coming'), h('p.muted', { style: { fontSize: '13px', maxWidth: '240px' } }, 'Ideas: position sizing math, funding and basis, the psychology of the stop, liquidation mechanics.')))));
+      h('div', icon('lightbulb', 'xl'), h('h3', { style: { marginTop: '8px' } }, 'More guides coming'), h('p.muted', { style: { fontSize: '13px', maxWidth: '240px' } }, 'Next up: perpetual futures mechanics (funding, mark price, liquidations) and reading your own stats (R, expectancy, sample size).')))));
 }
 
 function reader(g, secId) {

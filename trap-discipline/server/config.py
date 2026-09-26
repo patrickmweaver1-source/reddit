@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 APP_NAME = "TRAP Discipline"
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.1"
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
