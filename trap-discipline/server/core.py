@@ -394,7 +394,8 @@ class TrapApp:
                 if f.get("next"):
                     nf[sym] = f["next"]
         open_n = len(self.account.positions) if self.account else 0
-        return R.session_status(now_ms(), self.th(), self.db.trades("taken=1"), next_funding_ms=nf,
+        d0 = now_ms() - now_ms() % 86_400_000          # only today's closes matter here
+        return R.session_status(now_ms(), self.th(), self.db.trades("taken=1 AND closed_at>=?", (d0,)), next_funding_ms=nf,
                                 macro_today=self.settings()["macro_today"], open_positions=open_n)
 
     async def candles_between(self, sym: str, t0: int, t1: int) -> list[dict]:
@@ -417,8 +418,8 @@ class TrapApp:
                 log.info("candles_between %s: %s", sym, exc)
                 return []            # not cached: try again next time
         if rows and t1 < now_ms() - 2 * q:          # the range is finished: it will never change
-            if len(cache) > 2000:
-                cache.clear()
+            while len(cache) >= 2000:                  # drop the oldest entries, not all of them
+                cache.pop(next(iter(cache)))
             cache[key] = rows
         return rows
 
@@ -480,13 +481,34 @@ class TrapApp:
         (MarketEngine.sd(sym).c["15"]) -- no new Bybit calls, no trade data."""
         wl = self.settings()["watchlist"]
         candles = {sym: self.market.sd(sym).c["15"] for sym in wl if self.market and sym in self.market.data}
-        # The analysis only changes when a 15m candle closes, but it was recomputed on
-        # every Learning visit and every lessons lookup, blocking the server each time.
+        # The analysis only changes when a 15m candle closes and takes 0.5 to 5 s: it runs in a worker
+        # thread after each close, and callers get the latest finished result (never a server freeze).
         key = tuple((sym, len(c), c[-1]["t"] if c else None) for sym, c in candles.items())
         hit = self.__dict__.get("_cov_cache")
         if hit and hit[0] == key:
             return hit[1]
-        res = COV.analyze(candles)
+        if not self.__dict__.get("_cov_busy"):
+            self._cov_busy = True
+            snap = {sym: list(c) for sym, c in candles.items()}
+
+            async def run():
+                try:
+                    res = await asyncio.to_thread(COV.analyze, snap)
+                    self._cov_cache = (key, res)
+                finally:
+                    self._cov_busy = False
+            self._spawn(run())
+        return hit[1] if hit else COV.analyze({})
+
+    async def co_movement_fresh(self) -> dict:
+        """The up-to-date analysis, computed off the event loop if it is stale."""
+        wl = self.settings()["watchlist"]
+        candles = {sym: list(self.market.sd(sym).c["15"]) for sym in wl if self.market and sym in self.market.data}
+        key = tuple((sym, len(c), c[-1]["t"] if c else None) for sym, c in candles.items())
+        hit = self.__dict__.get("_cov_cache")
+        if hit and hit[0] == key:
+            return hit[1]
+        res = await asyncio.to_thread(COV.analyze, candles)
         self._cov_cache = (key, res)
         return res
 
@@ -564,7 +586,7 @@ class TrapApp:
             extra = f" {len(rev['proposals'])} rule proposal(s) waiting for you." if rev["proposals"] else ""
             await self.coach.say("info", "Your weekly review is ready", rev["one_change"] + extra, key=f"review:{rev['week']}")
         if COV.due_for_snapshot(self.db):
-            COV.save_snapshot(self.db, self.co_movement())
+            COV.save_snapshot(self.db, await self.co_movement_fresh())
 
     def attach_context(self, tid: int) -> None:
         t = self.db.trade(tid)
@@ -609,7 +631,12 @@ class TrapApp:
             candles = await self.candles_between(t["symbol"], t["opened_at"], t["closed_at"])
         prior = 0
         if t.get("opened_at"):
-            prior = R.losses_on_day([x for x in self.db.trades("taken=1") if x["id"] != tid], R.utc_day(t["opened_at"]), before_ms=t["opened_at"])
+            # only that UTC day's earlier closes (reading the whole journal here, once per trade, is what
+            # made a journal sync freeze the app)
+            d0 = t["opened_at"] - t["opened_at"] % 86_400_000
+            same_day = self.db.trades("taken=1 AND status='closed' AND closed_at>=? AND closed_at<=? AND id<>?",
+                                      (d0, t["opened_at"], tid))
+            prior = R.losses_on_day(same_day, R.utc_day(t["opened_at"]), before_ms=t["opened_at"])
         viol = R.evaluate_trade(t, th=th, equity_at_entry=self.equity_at(t.get("opened_at")), stop_history=stop_history,
                                 plan=plan, prior_losses_today=prior, logged_at=t.get("reviewed_at"),
                                 candles_after_entry=[k for k in (candles or []) if k["t"] >= (t.get("opened_at") or 0) - 15 * 60_000][1:] if candles else None)
@@ -670,8 +697,20 @@ class TrapApp:
                 await asyncio.sleep(1.0)
             finally:
                 self._xp_pending = False
-            self._after_xp_soon()
+            await self._after_xp()
         self._spawn(later())
+
+    async def _after_xp_if_changed(self) -> None:
+        """The 30-second safety net: re-check badges and push level/streaks only when XP, trades or
+        check-ins changed (or the day rolled over, or 5 minutes passed). Each run reads the whole journal."""
+        row = self.db.one("SELECT (SELECT COALESCE(MAX(id),0) FROM xp_events) AS xp, (SELECT COUNT(*) FROM trades) AS nt, "
+                          "(SELECT COALESCE(MAX(updated_at),0) FROM trades) AS tu, (SELECT COALESCE(MAX(ts),0) FROM checkins) AS ci")
+        key = (tuple(row.values()), datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        last = self.__dict__.get("_xp_key")
+        if last and last[0] == key and time.monotonic() - last[1] < 300:
+            return
+        self._xp_key = (key, time.monotonic())
+        await self._after_xp()
 
     async def _after_xp(self) -> None:
         for b in G.check_badges(self.db):
@@ -748,16 +787,30 @@ class TrapApp:
                     await self.push("session", st)
                 self._honor_plans()
                 self._day_end_awards()
+                self._daily_prune()
                 try:
                     await self._learning_tick()
                 except Exception:  # noqa: BLE001  (learning never stops the app)
                     log.exception("learning")
-                await self._after_xp()
+                await self._after_xp_if_changed()
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 log.exception("periodic")
             await asyncio.sleep(30)
+
+    def _daily_prune(self) -> None:
+        """Once a day: drop coach messages older than 90 days and raw fill logs older than 30 (both only
+        ever grew; the coach list is read on every page refresh)."""
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._flags.get("pruned") == day:
+            return
+        self._flags["pruned"] = day
+        try:
+            self.db.execute("DELETE FROM coach WHERE ts<?", (now_ms() - 90 * 86_400_000,))
+            self.db.execute("DELETE FROM raw_events WHERE ts<?", (now_ms() - 30 * 86_400_000,))
+        except Exception:  # noqa: BLE001
+            log.exception("daily prune")
 
     def _honor_plans(self) -> None:
         cutoff = now_ms() - 60 * 60_000

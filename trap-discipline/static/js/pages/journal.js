@@ -24,7 +24,9 @@ export async function render(el, ctx) {
   tick = setInterval(timers, 1000);
 }
 export function destroy() { clearInterval(tick); }
-export function onEvent(msg) { if (msg.kind === 'trade') { load().then(draw); } }
+// a journal sync can announce many trades at once: reload once, a second after the last one
+let reloadT = null;
+export function onEvent(msg) { if (msg.kind === 'trade') { clearTimeout(reloadT); reloadT = setTimeout(() => load().then(draw), 1000); } }
 
 async function load() { trades = await api.get('/api/trades'); }
 

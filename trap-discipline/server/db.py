@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
 PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS kv (
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS trades (
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_trades_open ON trades(opened_at);
+CREATE INDEX IF NOT EXISTS ix_trades_closed ON trades(closed_at);
 
 -- Every call the app made (AI scan or checklist verdict), later checked
 -- against what the market actually did. This is the app's report card.
@@ -127,6 +129,7 @@ CREATE TABLE IF NOT EXISTS coach (
   title TEXT NOT NULL, body TEXT NOT NULL, ref TEXT,
   acked INTEGER DEFAULT 0, key TEXT UNIQUE
 );
+CREATE INDEX IF NOT EXISTS ix_coach_ts ON coach(ts);
 
 CREATE TABLE IF NOT EXISTS rule_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

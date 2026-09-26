@@ -148,13 +148,13 @@ def streaks(db: DB) -> dict:
     while d.isoformat() in days:
         chk += 1
         d -= timedelta(days=1)
-    best_chk = 0
+    best_chk = run = 0                      # one pass over the sorted days (was a scan back from every day)
+    prev = None
     for day in sorted(days):
         dd = datetime.fromisoformat(day).date()
-        n = 0
-        while (dd - timedelta(days=n)).isoformat() in days:
-            n += 1
-        best_chk = max(best_chk, n)
+        run = run + 1 if prev is not None and dd - prev == timedelta(days=1) else 1
+        best_chk = max(best_chk, run)
+        prev = dd
     return {"clean": clean, "best_clean": best_clean, "fresh": fresh, "checkin": chk, "best_checkin": best_chk,
             "checked_in_today": today.isoformat() in days}
 

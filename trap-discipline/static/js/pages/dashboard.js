@@ -10,7 +10,8 @@ export async function render(el, ctx) {
   D = await api.get('/api/stats');
   draw();
 }
-export function onEvent(msg) { if (msg.kind === 'trade' && root) api.get('/api/stats').then(d => { D = d; draw(); }); }
+let reloadT = null;   // one reload a second after the last trade update, not one per trade
+export function onEvent(msg) { if (msg.kind === 'trade' && root) { clearTimeout(reloadT); reloadT = setTimeout(() => { if (root) api.get('/api/stats').then(d => { D = d; draw(); }); }, 1000); } }
 
 function draw() {
   clear(root);

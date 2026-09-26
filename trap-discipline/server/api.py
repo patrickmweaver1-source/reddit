@@ -554,7 +554,7 @@ async def stats(request):
 
 async def game(request):
     a = app_of(request)
-    return ok(G.summary(a.db))
+    return ok(await asyncio.to_thread(G.summary, a.db))
 
 
 async def badges_seen(request):
@@ -739,7 +739,7 @@ async def settings_put(request):
         if k in b:
             a.set_setting(k, bool(b[k]))
     if "sms_enabled" in b:
-        if bool(b["sms_enabled"]) and not SMS.load():
+        if bool(b["sms_enabled"]) and not await asyncio.to_thread(SMS.load):
             return fail("Save a Twilio account under Settings > Notifications first, then turn SMS alerts on.")
         a.set_setting("sms_enabled", bool(b["sms_enabled"]))
     if "tailnet_host" in b:
@@ -768,12 +768,13 @@ async def settings_put(request):
 # ---------------------------------------------------------------- learning
 async def learning_page(request):
     a = app_of(request)
-    return ok(L.page(a.db, a.db.trades(), a.th(), set(a.settings()["thin_assets"])))
+    # reads the whole journal: a worker thread keeps the rest of the app responsive meanwhile
+    return ok(await asyncio.to_thread(lambda: L.page(a.db, a.db.trades(), a.th(), set(a.settings()["thin_assets"]))))
 
 
 async def learning_comovement(request):
     a = app_of(request)
-    return ok(a.co_movement() | {"history": a.co_movement_history()})
+    return ok((await a.co_movement_fresh()) | {"history": a.co_movement_history()})
 
 
 async def learning_lessons(request):
@@ -803,7 +804,8 @@ async def learning_restriction(request):
         L.set_restriction(a.db, rid, request.match_info["action"])
     except (KeyError, ValueError):
         return fail("Unknown proposal or action.", 404)
-    return ok(L.page(a.db, a.db.trades(), a.th(), set(a.settings()["thin_assets"])))
+    # reads the whole journal: a worker thread keeps the rest of the app responsive meanwhile
+    return ok(await asyncio.to_thread(lambda: L.page(a.db, a.db.trades(), a.th(), set(a.settings()["thin_assets"]))))
 
 
 # ---------------------------------------------------------------- AI analyst (Claude)
@@ -1004,7 +1006,7 @@ def _sms_view(creds: dict | None) -> dict:
 
 async def sms_info(request):
     a = app_of(request)
-    v = _sms_view(SMS.load())
+    v = _sms_view(await asyncio.to_thread(SMS.load))
     v["enabled"] = a.settings()["sms_enabled"]
     return ok(v)
 
@@ -1029,7 +1031,7 @@ async def sms_config_save(request):
     except SMS.SmsError as exc:
         return fail(str(exc), 400)
     SMS.save(account_sid, auth_token, from_number, to_number)
-    return ok(_sms_view(SMS.load()) | {"enabled": a.settings()["sms_enabled"]})
+    return ok(_sms_view(await asyncio.to_thread(SMS.load)) | {"enabled": a.settings()["sms_enabled"]})
 
 
 async def sms_config_clear(request):
@@ -1041,7 +1043,7 @@ async def sms_config_clear(request):
 
 async def sms_test(request):
     a = app_of(request)
-    creds = SMS.load()
+    creds = await asyncio.to_thread(SMS.load)
     if not creds:
         return fail("Save a Twilio account first.", 503)
     ok_sent, err = await SMS.send_sms(a.http, creds,
@@ -1213,17 +1215,25 @@ def _export_rows(a) -> list[list]:
 
 async def export_csv(request):
     a = app_of(request)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(EXPORT_COLS)
-    w.writerows(_export_rows(a))
-    return web.Response(text=buf.getvalue(), content_type="text/csv",
+    def build() -> str:
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(EXPORT_COLS)
+        w.writerows(_export_rows(a))
+        return buf.getvalue()
+    return web.Response(text=await asyncio.to_thread(build), content_type="text/csv",
                         headers={"Content-Disposition": f"attachment; filename=trap-journal-{datetime.now():%Y%m%d}.csv"})
 
 
 async def export_xlsx(request):
     """Fill the original Trap Journal workbook so its Dashboard and Diagnostics keep working."""
     a = app_of(request)
+    return web.Response(body=await asyncio.to_thread(_build_xlsx, a),
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename=Trap-Journal-{datetime.now():%Y%m%d}.xlsx"})
+
+
+def _build_xlsx(a) -> bytes:
     import openpyxl
     wb = openpyxl.load_workbook(config.TEMPLATE_XLSX)
     ws = wb["Trade Log"]
@@ -1250,17 +1260,18 @@ async def export_xlsx(request):
     wb.properties.lastModifiedBy = "Weaver, Pat (Assoc-PHIL-CP)"
     out = io.BytesIO()
     wb.save(out)
-    return web.Response(body=out.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        headers={"Content-Disposition": f"attachment; filename=Trap-Journal-{datetime.now():%Y%m%d}.xlsx"})
+    return out.getvalue()
 
 
 async def export_json(request):
     a = app_of(request)
-    data = {"exported_at": now_ms(), "version": config.APP_VERSION, "trades": a.db.trades(),
-            "plans": a.db.query("SELECT * FROM plans"), "xp": a.db.query("SELECT * FROM xp_events"),
-            "badges": a.db.query("SELECT * FROM badges"), "rulebook": a.db.query("SELECT * FROM rule_versions"),
-            "reviews": a.db.query("SELECT * FROM reviews"), "checkins": a.db.query("SELECT * FROM checkins")}
-    return web.Response(text=json.dumps(data, default=str, indent=1), content_type="application/json",
+    def build() -> str:
+        data = {"exported_at": now_ms(), "version": config.APP_VERSION, "trades": a.db.trades(),
+                "plans": a.db.query("SELECT * FROM plans"), "xp": a.db.query("SELECT * FROM xp_events"),
+                "badges": a.db.query("SELECT * FROM badges"), "rulebook": a.db.query("SELECT * FROM rule_versions"),
+                "reviews": a.db.query("SELECT * FROM reviews"), "checkins": a.db.query("SELECT * FROM checkins")}
+        return json.dumps(data, default=str, indent=1)
+    return web.Response(text=await asyncio.to_thread(build), content_type="application/json",
                         headers={"Content-Disposition": f"attachment; filename=trap-backup-{datetime.now():%Y%m%d}.json"})
 
 

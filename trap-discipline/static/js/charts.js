@@ -16,14 +16,16 @@ function niceTicks(min, max, n = 5) {
 /* Redraw `draw(width)` at the wrap's true width, and again whenever it changes. */
 function responsive(wrap, draw) {
   let last = 0;
+  let ro = null;
   const render = () => {
+    if (ro && !wrap.isConnected) { ro.disconnect(); ro = null; return; }   // chart was redrawn or the page left
     const w = Math.max(320, Math.round(wrap.clientWidth || 0) || 800);
     if (Math.abs(w - last) < 8) return;
     last = w; draw(w);
   };
   requestAnimationFrame(render);
   if (typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(render);
+    ro = new ResizeObserver(render);
     ro.observe(wrap);
   }
   draw(800); // immediate draw so the chart exists even before layout

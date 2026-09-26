@@ -254,7 +254,7 @@ class AccountSync:
                     new = False
                     for e in rows:
                         new |= self._insert_exec(norm_exec(e))
-                    if new:
+                    if new or getattr(self, "_retry_rebuild", False):
                         await self.rebuild()
                 if n % 360 == 0:
                     await self.refresh_fee()
@@ -283,6 +283,9 @@ class AccountSync:
         return cur - later
 
     async def rebuild(self, symbols: set[str] | None = None) -> None:
+        """Rebuild journal rows from Bybit fills. Only trades whose fills changed (and open ones) are
+        re-processed: re-running every trade on every new fill froze the app for seconds to a minute
+        on a long journal. One bad trade no longer stops the rest; failures are retried on the next poll."""
         async with self._rebuild_lock:
             where = "exec_type IS NOT NULL"
             params: list = []
@@ -291,8 +294,24 @@ class AccountSync:
                 params = list(symbols)
             rows = self.db.query(f"SELECT * FROM executions WHERE {where} ORDER BY exec_time", params)
             recon = T.reconstruct(rows)
+            existing = {(r["symbol"], r["opened_at"]): r for r in
+                        self.db.query("SELECT id, symbol, opened_at, status FROM trades WHERE source='bybit'")}
+            mapped: dict[int, set] = {}
+            for r in self.db.query("SELECT trade_id, exec_id FROM executions WHERE trade_id IS NOT NULL"):
+                mapped.setdefault(r["trade_id"], set()).add(r["exec_id"])
+            failed = False
             for tr in recon:
-                await self._upsert(tr)
+                ex = existing.get((tr["symbol"], tr["opened_at"]))
+                if (ex and ex["status"] == "closed" and tr["status"] == "closed"
+                        and set(tr["exec_ids"] or []) == mapped.get(ex["id"], set())):
+                    continue                                   # unchanged closed trade: nothing to redo
+                try:
+                    await self._upsert(tr)
+                except Exception:  # noqa: BLE001
+                    failed = True
+                    log.exception("journal sync failed for %s trade opened %s", tr["symbol"], tr["opened_at"])
+                await asyncio.sleep(0)                         # let pages and scans in between trades
+            self._retry_rebuild = failed
 
     async def _upsert(self, tr: dict) -> None:
         existing = self.db.one("SELECT id FROM trades WHERE source='bybit' AND symbol=? AND opened_at=?", (tr["symbol"], tr["opened_at"]))
