@@ -807,6 +807,11 @@ async def learning_restriction(request):
 
 
 # ---------------------------------------------------------------- AI analyst (Claude)
+async def diagnostics(request):
+    from . import diag as D
+    return ok(D.report(app_of(request)))
+
+
 async def ai_info(request):
     return ok(app_of(request).ai.info())
 
@@ -1316,6 +1321,7 @@ def build_routes(app: web.Application) -> None:
     r.add_get("/api/learning/lessons", learning_lessons)
     r.add_post("/api/learning/review", learning_review)
     r.add_post("/api/learning/restrictions/{id}/{action}", learning_restriction)
+    r.add_get("/api/diagnostics", diagnostics)
     r.add_get("/api/ai", ai_info)
     r.add_post("/api/ai/key", ai_key_save)
     r.add_delete("/api/ai/key", ai_key_clear)

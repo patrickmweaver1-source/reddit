@@ -180,6 +180,11 @@ class TrapApp:
         self._tasks.append(asyncio.create_task(self._periodic(), name="periodic"))
         self._tasks.append(asyncio.create_task(self.tuner.loop(), name="auto-tune"))
         self._tasks.append(asyncio.create_task(self._stall_watch(), name="stall-watch"))
+        from . import diag as D
+        D.install_log_buffer()
+        self.watchdog = D.Watchdog()
+        self._tasks.append(asyncio.create_task(self.watchdog.heartbeat(), name="watchdog-heartbeat"))
+        self.watchdog.start()
 
     async def _stall_watch(self) -> None:
         """Diagnostics only: write to trap.log whenever the app server stops responding
@@ -210,6 +215,8 @@ class TrapApp:
             self.set_setting("thin_assets", [next((f for f in fixed if f in SYM.candidates(t)), t) for t in thin])
 
     async def shutdown(self) -> None:
+        if getattr(self, "watchdog", None):
+            self.watchdog.stop()
         for t in list(self._bg):
             t.cancel()
         for t in self._tasks:

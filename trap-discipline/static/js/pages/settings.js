@@ -18,7 +18,32 @@ function draw() {
       h('div.sub', 'The app runs only on this computer (127.0.0.1). Your API secret is stored in your operating system\'s credential vault and never reaches the browser.'))),
     h('div.grid.g2',
       h('div.col', { style: { gap: '16px' } }, modeCard(c), connectCard(c), aiCard(), backupCard()),
-      h('div.col', { style: { gap: '16px' } }, appearanceCard(), notifCard(st), smsCard(st), watchCard(st), prefsCard(st), exportCard())));
+      h('div.col', { style: { gap: '16px' } }, appearanceCard(), notifCard(st), smsCard(st), watchCard(st), prefsCard(st), exportCard(), troubleCard())));
+}
+
+// ---------------------------------------------------------------- troubleshooting
+// Recent slow requests, freezes (with the code that was running), and AI scan timings:
+// one button copies them so they can be pasted to whoever is fixing the problem.
+function troubleCard() {
+  const card = h('div.card');
+  const load = async () => {
+    let d;
+    try { d = await api.get('/api/diagnostics'); } catch (e) { card.replaceChildren(h('div.errline', e.message)); return; }
+    const text = ['TRAP troubleshooting report', ...Object.entries(d.facts).map(([k, v]) => `${k}: ${v}`), '', ...d.lines].join('\n');
+    card.replaceChildren(
+      h('div.card-h', h('h3', icon('activity'), 'Troubleshooting'), h('span.sub', 'Slow pages, freezes and AI scan timings since TRAP started. No keys, balances or trades.')),
+      h('div.row.wrap', { style: { gap: '8px', marginBottom: '10px' } },
+        h('button.btn.primary', { onclick: async () => {
+          try { await navigator.clipboard.writeText(text); toast('Report copied', 'Paste it into the chat.', 'good'); }
+          catch { const ta = h('textarea', { style: { position: 'fixed', opacity: '0' } }, text); document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Report copied', 'Paste it into the chat.', 'good'); }
+        } }, icon('copy', 'sm'), 'Copy report'),
+        h('button.btn', { onclick: load }, icon('refresh-cw', 'sm'), 'Refresh')),
+      h('pre.math', { style: { maxHeight: '260px', overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0, fontSize: '11.5px', lineHeight: '1.5' } },
+        d.lines.length ? d.lines.slice(-60).join('\n') : 'Nothing slow or failed since TRAP started.'));
+  };
+  card.replaceChildren(h('div.card-h', h('h3', icon('activity'), 'Troubleshooting')), h('div.skeleton', { style: { height: '80px' } }));
+  load();
+  return card;
 }
 
 // ---------------------------------------------------------------- appearance (per device)

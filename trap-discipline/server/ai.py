@@ -59,9 +59,9 @@ RETRY_WAITS = (3, 8)             # seconds before the 2nd and 3rd attempt after 
 DEPTHS = {"fast": {"effort": "medium", "label": "Fast (recommended): about 30 to 90 seconds"},
           "deep": {"effort": "high", "label": "Deep: slower, can take several minutes"}}
 DEFAULT_DEPTH = "fast"
-SCAN_DEADLINE_S = 420            # a whole scan, retries included, never runs past 7 minutes
-ATTEMPT_TIMEOUT_S = 300          # one Claude call
-SILENCE_TIMEOUT_S = 90           # Claude's reasoning summary streams continuously; 90s of nothing is a dead link
+SCAN_DEADLINE_S = 540            # a whole scan, retries included, never runs past 9 minutes
+ATTEMPT_TIMEOUT_S = 360          # one Claude call
+SILENCE_TIMEOUT_S = 150          # the reasoning summary streams in bursts; 150s of nothing at all is a dead link
 MAX_TOKENS = 24000
 VERDICTS = ("TRADEABLE NOW", "WATCH", "NO SETUP", "STAND DOWN")
 SETUPS = ("Spring", "Upthrust", "Sweep", "Failed retest", "None")
@@ -491,6 +491,7 @@ async def call_claude(session: aiohttp.ClientSession, key: str, model: str, syst
     headers = {"x-api-key": key, "anthropic-version": API_VERSION, "content-type": "application/json",
                "accept": "text/event-stream"}
     timeout = aiohttp.ClientTimeout(total=total_s, sock_connect=20, sock_read=SILENCE_TIMEOUT_S)
+    t_start = time.monotonic()
     try:
         async with session.post(f"{API_BASE}/v1/messages", json=body, headers=headers, timeout=timeout) as resp:
             status = resp.status
@@ -498,12 +499,21 @@ async def call_claude(session: aiohttp.ClientSession, key: str, model: str, syst
                 data = await _read_stream(resp, model, on_progress)
                 return {"data": data, "usage": data.get("usage") or {}, "model": data.get("model") or model}
             text = await resp.text()
-    except AITransient:
+    except AITransient as exc:
+        took = time.monotonic() - t_start
+        if "dropped mid-answer" in str(exc) and took >= total_s - 2:
+            raise AITransient(f"Claude was still working after {took / 60:.0f} minutes (the per-attempt limit).", exc.usage) from exc
+        if "dropped mid-answer" in str(exc) and took >= SILENCE_TIMEOUT_S:
+            raise AITransient(f"Claude sent nothing for {SILENCE_TIMEOUT_S} seconds mid-answer (usually the VPN or "
+                              "Wi-Fi dropped the connection).", exc.usage) from exc
         raise
     except AIError:
         raise
     except asyncio.TimeoutError as exc:
-        raise AITransient("Claude took too long to answer.") from exc
+        took = time.monotonic() - t_start
+        if took < 25:
+            raise AITransient("Could not connect to Claude within 20 seconds (check the internet connection and VPN).") from exc
+        raise AITransient(f"Claude took too long to start answering ({took:.0f}s).") from exc
     except aiohttp.ClientError as exc:
         raise AITransient("Could not reach Claude (api.anthropic.com). Check the internet connection and VPN.") from exc
     if status == 400 and (structured or effort or thinking):
@@ -893,7 +903,8 @@ class AIAnalyst:
                     for attempt in range(3):
                         left = deadline - time.monotonic()
                         if left < 45:
-                            raise AIError("Claude took too long to answer. Scan again in a minute.")
+                            raise AIError(f"The scan hit its {SCAN_DEADLINE_S // 60}-minute limit across {attempt} attempt(s). "
+                                          "Scan again; if it keeps happening, copy the report in Settings > Troubleshooting.")
                         try:
                             ta = time.monotonic()
                             resp = await call_claude(a.http, key, model, system_prompt(th), user_message(packet),
@@ -922,7 +933,7 @@ class AIAnalyst:
                             log.warning("ai scan %s attempt %d after %.0fs: %s", sym, attempt + 1, time.monotonic() - ta, exc)
                             if attempt == 2 or self.spent() >= self.budget():
                                 raise AIError(f"{exc} Tried 3 times.") from exc
-                            if "too long" in str(exc) or time.monotonic() - ta > 0.6 * min(ATTEMPT_TIMEOUT_S, left):
+                            if "still working" in str(exc) or "too long" in str(exc) or time.monotonic() - ta > 0.6 * min(ATTEMPT_TIMEOUT_S, left):
                                 effort = "low"      # the retry thinks less so it finishes, instead of repeating the same long think
                             self.progress[sym] = "The connection hiccupped; retrying…"
                             await asyncio.sleep(RETRY_WAITS[attempt])
