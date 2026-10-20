@@ -25,3 +25,7 @@ Nothing here changes a rule, alert or threshold. Information only.
 
 ## Live capture
 A scheduled capture (see CAPTURE_LOG.md once started) appends snapshots of live cohort bias, liquidation summary and coin risk to `live_snapshots.jsonl`. Resolution is limited by what a scheduled session can do (about every few hours); a true 15-minute record needs a collector on your own computer.
+
+## First look (2026-10-20, run once on the frozen plan above; `study_v1.py`, `study_v1_result.json`)
+27 tests (3 coins x 3 hypotheses x 3 horizons), older 60 days to find, newer ~29 days (purged by the horizon) to confirm, Benjamini-Hochberg q = 0.10.
+Result: 0 of 27 passed in the find period and 0 of 27 in the confirm period. The strongest sign-consistent candidate was ETH, Sharps-minus-Crowd, 24-hour horizon (find z +0.56, confirm z +1.59, neither close to the BH cut). That is NOT evidence of an effect: with 89 days of hourly data these tests can only see large effects. Verdict for now: "not enough data to say", not "ruled out". The forward test (data after 2026-10-20) is what counts.
