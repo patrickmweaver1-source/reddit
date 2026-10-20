@@ -3,7 +3,7 @@
 Data pulled from the Coinversa Pulse connector (Hyperliquid positioning). Public market data only; no account, trade or balance data of yours is in here.
 
 ## What is here (captured 2026-10-20 ~11:13 UTC)
-- `cohort_bias_1h_<COIN>.csv` : hourly snapshots, 8 profitability tiers, for BTC, ETH, SOL; from 2026-07-22 to 2026-10-20 (89 days, a few hourly gaps: 2,113 of ~2,136 hours). Source tool: `live_cohort_bias_history` (up to 2,160 hours; the other cohort-history tool only reaches 30 days).
+- `cohort_bias_1h_<COIN>.csv` : hourly snapshots, 8 profitability tiers, for 16 coins (BTC, ETH, SOL, HYPE, ZEC, NEAR, XRP, PUMP, LIT, DOGE, WLD, ENA, XMR, TRUMP, SUI, AVAX, LINK; the three 2026-10-20 first-look study coins are BTC, ETH, SOL); from 2026-07-22 to 2026-10-20 (89 days, a few hourly gaps: 2,113 of ~2,136 hours). Source tool: `live_cohort_bias_history` (up to 2,160 hours; the other cohort-history tool only reaches 30 days).
 - `cohort_bias_4h_<COIN>.csv`, `cohort_bias_24h_<COIN>.csv` : the same series folded into UTC 4-hour and 24-hour buckets (last value, mean, and the number of hourly points). Derived by me from the hourly file; not a separate Coinversa series.
 - `cohort_performance_daily.csv` : daily PnL, volume, trades and win rate per tier for the last 30 days.
 - **15-minute resolution does not exist in the history.** Coinversa stores hourly snapshots. A 15-minute series can only be recorded live from now on (see "Live capture" below).
