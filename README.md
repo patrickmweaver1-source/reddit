@@ -6,7 +6,12 @@ A single-page, static web app that:
 - Filters by country / search, and lets you keep your own 👍/👎 "worked for me" tally (stored in your browser only).
 - Has a "Will a free number work?" checker that tells you whether a target service usually accepts shared VoIP numbers (e.g. Reddit/Google: often/maybe; WhatsApp, banks, PayPal: usually blocked).
 
-No backend, no scraping, no build step. Open `index.html` or deploy the folder to any static host (Netlify, GitHub Pages, Vercel).
+- **Live inbox:** pick a country and number, see the latest texts, click a highlighted code to copy it. Powered by `netlify/functions/inbox.js`, which reads FreePhoneNum.com only (a fixed host — it is not an open proxy). Quackr, SMS24.me, Receive-SMSS and GetFreeSMSNumber block automated reading (Cloudflare challenge / client-side loading), so they stay link-only.
+
+## Deploy
+Push to a Netlify site (config is in `netlify.toml`, no build step), or run locally with `npx netlify dev`. Opening `index.html` directly works, but the live inbox needs the function, so it won't load that way.
+
+If FreePhoneNum changes its page layout, update the regexes in `parseNumbers` / `parseMessages`.
 
 To add a provider or service, edit the `PROVIDERS` / `SERVICES` arrays at the top of the `<script>` in `index.html`.
 

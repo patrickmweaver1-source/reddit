@@ -21,6 +21,11 @@ input,select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;bac
 .rate{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
 .rate button{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px;padding:3px 8px;cursor:pointer}
 .warnbox{font-size:13px;color:var(--muted)}
+.btn{border:1px solid var(--line);background:var(--accent);color:#fff;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit}
+.btn.sm{padding:3px 10px;font-size:13px;background:var(--bg);color:var(--fg)}
+.msg{border-top:1px solid var(--line);padding:10px 0}.msg:first-child{border-top:0}
+.msg .meta{font-size:12px;color:var(--muted)}.msg .txt{word-break:break-word}
+.code{font-family:ui-monospace,monospace;font-weight:700;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -35,6 +40,17 @@ input,select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;bac
       <datalist id="svcList"></datalist>
     </div>
     <div id="verdict" class="verdict">Pick a service to see the likely outcome.</div>
+  </section>
+
+  <section class="card" id="inbox">
+    <strong>Live inbox</strong> <span class="warnbox">— numbers and texts pulled from FreePhoneNum (the other sites block automated reading; use their links below)</span>
+    <div class="controls" style="margin-top:8px">
+      <select id="ibCountry"><option value="">Loading numbers…</option></select>
+      <select id="ibNumber"></select>
+      <button id="ibRefresh" class="btn">Refresh</button>
+    </div>
+    <div id="ibHead" class="warnbox" style="margin-top:10px"></div>
+    <div id="ibMsgs"></div>
   </section>
 
   <section class="card">
@@ -102,6 +118,67 @@ $("#list").addEventListener("click",e=>{const b=e.target.closest("button");if(!b
   const r=ratings[b.dataset.n]||{up:0,down:0};r[b.dataset.v]++;ratings[b.dataset.n]=r;store.set("ratings",ratings);render();});
 ["#q","#country","#sort"].forEach(s=>$(s).addEventListener("input",render));
 render();
+
+// ---- Live inbox ----
+const CC_NAMES = {us:"United States",ca:"Canada",gb:"United Kingdom",be:"Belgium",pl:"Poland",pr:"Puerto Rico",es:"Spain",bg:"Bulgaria",ee:"Estonia",lv:"Latvia",nz:"New Zealand",ro:"Romania",se:"Sweden",za:"South Africa"};
+const DIAL = {us:"1",ca:"1",pr:"1",gb:"44",be:"32",pl:"48",es:"34",bg:"359",ee:"372",lv:"371",nz:"64",ro:"40",se:"46",za:"27"};
+const intl = (cc,n) => "+" + (DIAL[cc]||"") + n;
+let NUMS = [];
+const el = (tag, cls, txt) => { const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; };
+const copy = t => navigator.clipboard?.writeText(t).catch(()=>{});
+
+async function api(params){
+  const r = await fetch("/.netlify/functions/inbox?"+new URLSearchParams(params));
+  const b = await r.json().catch(()=>({error:"Bad response"}));
+  if(!r.ok) throw new Error(b.error||r.status);
+  return b;
+}
+function fillNumbers(){
+  const cc=$("#ibCountry").value, sel=$("#ibNumber"); sel.innerHTML="";
+  NUMS.filter(n=>n.cc===cc).forEach(n=>sel.append(new Option(intl(cc,n.number),n.number)));
+  loadMsgs();
+}
+async function loadNumbers(){
+  try{
+    NUMS=(await api({action:"numbers"})).numbers;
+    const counts={}; NUMS.forEach(n=>counts[n.cc]=(counts[n.cc]||0)+1);
+    const s=$("#ibCountry"); s.innerHTML="";
+    Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).forEach(cc=>s.append(new Option(`${CC_NAMES[cc]||cc.toUpperCase()} (${counts[cc]})`,cc)));
+    s.value = counts.us ? "us" : s.options[0]?.value;
+    fillNumbers();
+  }catch(e){ $("#ibCountry").innerHTML='<option value="">Unavailable</option>'; $("#ibHead").textContent="Couldn't load numbers: "+e.message+". (The inbox only works when deployed to Netlify or run with `netlify dev`.)"; }
+}
+function withCodes(text){
+  const frag=document.createDocumentFragment(); let last=0;
+  for(const m of text.matchAll(/\b\d{4,8}\b/g)){
+    frag.append(text.slice(last,m.index));
+    const c=el("span","code",m[0]); c.title="Click to copy"; c.onclick=()=>copy(m[0]); frag.append(c);
+    last=m.index+m[0].length;
+  }
+  frag.append(text.slice(last)); return frag;
+}
+async function loadMsgs(){
+  const cc=$("#ibCountry").value, number=$("#ibNumber").value, box=$("#ibMsgs"), head=$("#ibHead");
+  box.innerHTML=""; if(!number) return;
+  head.innerHTML=""; head.append("Number: ");
+  const b=el("button","btn sm",intl(cc,number)+" (copy)"); b.onclick=()=>copy(intl(cc,number)); head.append(b);
+  head.append(" — loading…");
+  try{
+    let {messages}=await api({action:"messages",cc,number});
+    messages = messages.filter(m=>m.text);
+    head.lastChild.textContent = ` — ${messages.length} recent messages (newest first). Send your code, wait ~30s, hit Refresh.`;
+    if(!messages.length) box.append(el("div","msg","No messages yet."));
+    messages.forEach(m=>{
+      const d=el("div","msg");
+      d.append(el("div","meta",[m.service&&m.service!=="Other"?m.service:m.sender, m.from].filter(Boolean).join(" · ")));
+      const t=el("div","txt"); t.append(withCodes(m.text)); d.append(t); box.append(d);
+    });
+  }catch(e){ head.lastChild.textContent=" — couldn't load: "+e.message; }
+}
+$("#ibCountry").addEventListener("change",fillNumbers);
+$("#ibNumber").addEventListener("change",loadMsgs);
+$("#ibRefresh").addEventListener("click",loadMsgs);
+loadNumbers();
 </script>
 </body>
 </html>
