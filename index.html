@@ -146,7 +146,7 @@ async function loadNumbers(){
     Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).forEach(cc=>s.append(new Option(`${CC_NAMES[cc]||cc.toUpperCase()} (${counts[cc]})`,cc)));
     s.value = counts.us ? "us" : s.options[0]?.value;
     fillNumbers();
-  }catch(e){ $("#ibCountry").innerHTML='<option value="">Unavailable</option>'; $("#ibHead").textContent="Couldn't load numbers: "+e.message+". (The inbox only works when deployed to Netlify or run with `netlify dev`.)"; }
+  }catch(e){ $("#ibCountry").innerHTML='<option value="">Unavailable</option>'; const h=$("#ibHead"); h.textContent=(/403/.test(e.message)?"FreePhoneNum is refusing automated requests right now, so the in-app inbox can't load. Open the site directly instead: ":"Couldn't load numbers ("+e.message+"). Make sure you're running it with netlify dev, or open the site directly: "); const a=el("a",null,"freephonenum.com/receive-sms ↗"); a.href="https://freephonenum.com/receive-sms"; a.target="_blank"; a.rel="noopener noreferrer"; h.append(a); }
 }
 function withCodes(text){
   const frag=document.createDocumentFragment(); let last=0;
