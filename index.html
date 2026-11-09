@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Free SMS Inbox Finder</title>
+<style>
+:root{--bg:#f7f7f8;--card:#fff;--fg:#1b1b1f;--muted:#666;--line:#e3e3e8;--accent:#2b6cb0;--ok:#2f855a;--warn:#b7791f;--bad:#c53030}
+@media (prefers-color-scheme:dark){:root{--bg:#121214;--card:#1c1c20;--fg:#ececf1;--muted:#9a9aa5;--line:#2e2e35;--accent:#63a4ff;--ok:#68d391;--warn:#f6c453;--bad:#fc8181}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:980px;margin:0 auto;padding:24px 16px}
+h1{margin:0 0 4px;font-size:26px}p.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.controls{display:flex;flex-wrap:wrap;gap:10px}
+input,select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;flex:1;min-width:180px}
+.verdict{margin-top:12px;padding:10px 12px;border-radius:8px;border-left:4px solid var(--muted);background:var(--bg)}
+.verdict.ok{border-color:var(--ok)}.verdict.warn{border-color:var(--warn)}.verdict.bad{border-color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.p h3{margin:0 0 4px;font-size:17px}.p a{color:var(--accent)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.rate{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
+.rate button{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px;padding:3px 8px;cursor:pointer}
+.warnbox{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Free SMS Inbox Finder</h1>
+  <p class="sub">Compare free, public, no-signup SMS-receiving sites and check whether a target service is likely to accept a shared VoIP number.</p>
+
+  <section class="card">
+    <strong>Will a free number work?</strong>
+    <div class="controls" style="margin-top:8px">
+      <input id="svc" list="svcList" placeholder="Service you're verifying with (e.g. Google, WhatsApp)">
+      <datalist id="svcList"></datalist>
+    </div>
+    <div id="verdict" class="verdict">Pick a service to see the likely outcome.</div>
+  </section>
+
+  <section class="card">
+    <div class="controls">
+      <input id="q" placeholder="Search providers…">
+      <select id="country"><option value="">Any country</option></select>
+      <select id="sort"><option value="name">Sort: name</option><option value="rating">Sort: my rating</option></select>
+    </div>
+  </section>
+
+  <section id="list" class="grid"></section>
+
+  <section class="card warnbox">
+    <strong>Read before using:</strong> every inbox on these sites is <em>public</em> — anyone can read the codes sent to it, and the number can be reused by someone else to take over or recover an account you created with it. Never use them for accounts you care about (email, banking, crypto, anything with money or personal data). Numbers rotate and go stale often; availability and country coverage change frequently, so treat the listings here as starting points, not guarantees. Respect each site's and each service's terms of use.
+  </section>
+</main>
+<script>
+const PROVIDERS = [
+  {name:"Quackr", url:"https://quackr.io", countries:["US","UK","CA","DE","FR","NL","SE","PL"], notes:"Clean UI; numbers refresh regularly."},
+  {name:"SMS24.me", url:"https://sms24.me", countries:["US","UK","DE","FR","NL","SE","ES","IT","PL","RU"], notes:"Large country list; many numbers heavily reused."},
+  {name:"Receive-SMSS", url:"https://receive-smss.com", countries:["US","UK","CA","DE","FR","NL","SE","FI","BE"], notes:"Public inboxes; operator also sells private numbers."},
+  {name:"GetFreeSMSNumber", url:"https://getfreesmsnumber.com", countries:["US","UK","CA","DE","FR","NL","ES","IT"], notes:"Filter by country; messages show sender."},
+  {name:"FreePhoneNum", url:"https://freephonenum.com", countries:["US","CA"], notes:"Mostly North American numbers."}
+];
+// likely: "ok" usually accepts shared VoIP, "warn" hit-or-miss, "bad" usually blocks VoIP/reused numbers
+const SERVICES = {
+  "Google":"warn","Facebook":"warn","Instagram":"warn","Twitter / X":"warn","Telegram":"warn","Discord":"warn",
+  "TikTok":"warn","Reddit":"ok","Microsoft":"warn","Yahoo":"warn","Amazon":"warn",
+  "WhatsApp":"bad","Signal":"bad","Banks / fintech":"bad","PayPal":"bad","Venmo / Cash App":"bad",
+  "Uber / Lyft":"bad","Crypto exchanges":"bad","Tinder / dating apps":"bad","Government services":"bad"
+};
+const MSG = {
+  ok:"Often works with shared numbers, but codes may already have been used by someone else — try a freshly listed number.",
+  warn:"Hit-or-miss. Popular numbers are frequently flagged as already used or as VoIP. Try the newest numbers first and expect several attempts.",
+  bad:"Usually fails. This service typically blocks VoIP or recycled numbers — and you should not tie an account like this to a public inbox anyway. Use your own number or a paid private/non-VoIP number."
+};
+const $ = s => document.querySelector(s);
+const store = { get(k){try{return JSON.parse(localStorage.getItem(k))||{}}catch{return {}}}, set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}} };
+let ratings = store.get("ratings");
+
+$("#svcList").innerHTML = Object.keys(SERVICES).map(s=>`<option value="${s}">`).join("");
+$("#svc").addEventListener("input", e=>{
+  const key = Object.keys(SERVICES).find(k=>k.toLowerCase()===e.target.value.trim().toLowerCase());
+  const v = $("#verdict");
+  if(!key){v.className="verdict";v.textContent=e.target.value?"Not in the list — unknown; assume hit-or-miss.":"Pick a service to see the likely outcome.";return;}
+  v.className="verdict "+SERVICES[key]; v.textContent=`${key}: ${MSG[SERVICES[key]]}`;
+});
+
+const allC = [...new Set(PROVIDERS.flatMap(p=>p.countries))].sort();
+$("#country").innerHTML += allC.map(c=>`<option>${c}</option>`).join("");
+
+function score(n){const r=ratings[n]||{up:0,down:0};return r.up-r.down}
+function render(){
+  const q=$("#q").value.toLowerCase(), c=$("#country").value;
+  let list=PROVIDERS.filter(p=>(!q||(p.name+p.notes).toLowerCase().includes(q))&&(!c||p.countries.includes(c)));
+  list.sort($("#sort").value==="rating"?(a,b)=>score(b.name)-score(a.name):(a,b)=>a.name.localeCompare(b.name));
+  $("#list").innerHTML = list.map(p=>{const r=ratings[p.name]||{up:0,down:0};return `
+    <div class="card p"><h3><a href="${p.url}" target="_blank" rel="noopener noreferrer">${p.name} ↗</a></h3>
+    <div>${p.notes}</div>
+    <div class="tags">${p.countries.map(x=>`<span class="tag">${x}</span>`).join("")}<span class="tag">free</span><span class="tag">no signup</span><span class="tag">public / VoIP</span></div>
+    <div class="rate">Worked for me? <button data-n="${p.name}" data-v="up">👍 ${r.up}</button><button data-n="${p.name}" data-v="down">👎 ${r.down}</button></div></div>`}).join("")
+    || `<div class="card">No providers match.</div>`;
+}
+$("#list").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+  const r=ratings[b.dataset.n]||{up:0,down:0};r[b.dataset.v]++;ratings[b.dataset.n]=r;store.set("ratings",ratings);render();});
+["#q","#country","#sort"].forEach(s=>$(s).addEventListener("input",render));
+render();
+</script>
+</body>
+</html>
